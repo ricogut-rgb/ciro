@@ -1915,7 +1915,12 @@ def _make_handler(manager: RunManager, token: str | None,
         def _signup_success(self, rec: dict) -> None:
             """Success path. Sets the auth cookie; replies JSON (JS → /signed_up) or an
             HTML redirect page (noscript fallback → /signed_up). In MVP (2) honest-wait,
-            the post-signup destination is the explicit held page — not the console."""
+            the post-signup destination is the explicit held page — not the console.
+
+            The noscript stub is a brief interstitial but still user-facing HTML, so it
+            carries the AGPL §13 source-offer inline (bare page, no shared stylesheet —
+            inline style matches the paper-page footer register of the destinations).
+            """
             cookie = self._token_cookie_header(rec["token"])
             if self._wants_html():
                 body = (
@@ -1924,6 +1929,12 @@ def _make_handler(manager: RunManager, token: str | None,
                     "<title>CIRO — signed up</title>"
                     "<p style=\"font-family:system-ui,sans-serif;padding:2rem\">"
                     "signed up. <a href=\"/signed_up\">Continue</a>.</p>"
+                    "<p style=\"font-family:'Iowan Old Style','Charter','Palatino',"
+                    "'Georgia',serif;color:#b5a892;font-size:12px;letter-spacing:.02em;"
+                    "padding:0 2rem;margin:0\">"
+                    "<a href=\"https://github.com/ricogut-rgb/ciro\" rel=\"noopener\" "
+                    "style=\"color:#b5a892;text-decoration:underline\">"
+                    "Source &middot; AGPL-3.0</a></p>"
                 ).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
