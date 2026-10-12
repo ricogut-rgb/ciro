@@ -52,8 +52,8 @@ _WHY_HOLDING_HTML = r"""<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>CIRO — Why</title>
 <style>
-:root{--ground:#f4ede1;--ink:#2b241d;--muted:#6e604d;--serif:'Iowan Old Style','Charter','Palatino','Georgia',serif}
-@media(prefers-color-scheme:dark){:root{--ground:#17120d;--ink:#ebe0cd;--muted:#9d8f77}}
+:root{--ground:#f4ede1;--ink:#2b241d;--muted:#6e604d;--faint:#b5a892;--serif:'Iowan Old Style','Charter','Palatino','Georgia',serif}
+@media(prefers-color-scheme:dark){:root{--ground:#17120d;--ink:#ebe0cd;--muted:#9d8f77;--faint:#4d4235}}
 html,body{height:100%;margin:0}
 body{background:var(--ground);color:var(--ink);font-family:var(--serif);display:flex;align-items:center;justify-content:center;padding:2rem;line-height:1.6}
 main{max-width:30rem;text-align:center}
@@ -62,11 +62,15 @@ p{font-size:17px;color:var(--muted);margin:0 0 1rem}
 a{color:var(--muted);text-decoration:underline;text-underline-offset:3px}
 a:hover{color:var(--ink)}
 .back{margin-top:2.5rem;font-size:14px}
+.src{margin-top:.9rem;font-size:12px;letter-spacing:.02em}
+.src a{color:var(--faint);text-decoration-color:var(--faint)}
+.src a:hover{color:var(--muted);text-decoration-color:var(--muted)}
 </style>
 </head><body><main>
 <h1>Why building generative technology in 2026 should cost nothing.</h1>
 <p>The piece is being written. Thank you for the curiosity &mdash; it means the question is landing.</p>
 <p class="back"><a href="/">&larr; back to CIRO</a></p>
+<p class="src"><a href="https://github.com/ricogut-rgb/ciro" rel="noopener">Source &middot; AGPL-3.0</a></p>
 </main></body></html>
 """
 
@@ -80,8 +84,8 @@ _HONEST_WAIT_SHELL = r"""<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>CIRO</title>
 <style>
-:root{--ground:#f4ede1;--ink:#2b241d;--muted:#6e604d;--serif:'Iowan Old Style','Charter','Palatino','Georgia',serif}
-@media(prefers-color-scheme:dark){:root{--ground:#17120d;--ink:#ebe0cd;--muted:#9d8f77}}
+:root{--ground:#f4ede1;--ink:#2b241d;--muted:#6e604d;--faint:#b5a892;--serif:'Iowan Old Style','Charter','Palatino','Georgia',serif}
+@media(prefers-color-scheme:dark){:root{--ground:#17120d;--ink:#ebe0cd;--muted:#9d8f77;--faint:#4d4235}}
 html,body{height:100%;margin:0}
 body{background:var(--ground);color:var(--ink);font-family:var(--serif);display:flex;align-items:center;justify-content:center;padding:2rem;line-height:1.6}
 main{max-width:28rem;text-align:center}
@@ -90,11 +94,22 @@ p{font-size:17px;color:var(--muted);margin:0 0 1rem}
 a{color:var(--muted);text-decoration:underline;text-underline-offset:3px}
 a:hover{color:var(--ink)}
 .back{margin-top:2.5rem;font-size:14px}
+.src{margin-top:.9rem;font-size:12px;letter-spacing:.02em}
+.src a{color:var(--faint);text-decoration-color:var(--faint)}
+.src a:hover{color:var(--muted);text-decoration-color:var(--muted)}
 </style>
 </head><body><main>
 __BODY__
 </main></body></html>
 """
+
+# AGPL-3.0 §13 source-offer: visible on every honest-wait variant, same paper
+# register as .back. Rendered via the shared .src style in _HONEST_WAIT_SHELL;
+# both bodies carry it so neither variant can ship without the offer.
+_SOURCE_OFFER_PAPER = (
+    "<p class=\"src\"><a href=\"https://github.com/ricogut-rgb/ciro\" "
+    "rel=\"noopener\">Source &middot; AGPL-3.0</a></p>"
+)
 
 _HONEST_WAIT_EMAIL_BODY = (
     # Register-honest: record-only α holds the address; the delivery channel is
@@ -105,12 +120,14 @@ _HONEST_WAIT_EMAIL_BODY = (
     "<p>CIRO isn&rsquo;t live yet. Your email is on record "
     "for when the door opens.</p>"
     "<p class=\"back\"><a href=\"/why\">&larr; back</a></p>"
+    + _SOURCE_OFFER_PAPER
 )
 
 _HONEST_WAIT_ANON_BODY = (
     "<h1>We have you.</h1>"
     "<p>CIRO isn&rsquo;t live yet. Come back soon &mdash; the door opens here.</p>"
     "<p class=\"back\"><a href=\"/why\">&larr; back</a></p>"
+    + _SOURCE_OFFER_PAPER
 )
 
 
@@ -310,6 +327,12 @@ pre{white-space:pre-wrap;word-break:break-word;font-size:12px;color:var(--muted)
 .reception .r-why{font:400 13.5px/1.6 var(--sans);letter-spacing:.03em;max-width:25rem;margin:2.9rem auto 0}
 .r-why a{color:var(--muted);text-decoration:underline;text-underline-offset:3px;text-decoration-thickness:1px;text-decoration-color:var(--faint)}
 .r-why a:hover{color:var(--accent);text-decoration-color:var(--accent)}
+/* AGPL-3.0 §13 source offer. Persistent dock footer so the link stays reachable
+   across every state transition (reception, convo, zoomed). Fine-print register —
+   small, muted, no decoration beyond the underline it needs to read as a link. */
+.src-foot{font:400 11.5px/1.5 var(--sans);letter-spacing:.03em;color:var(--faint);text-align:center;margin:10px 0 0;padding:0}
+.src-foot a{color:var(--faint);text-decoration:underline;text-underline-offset:3px;text-decoration-thickness:1px;text-decoration-color:var(--faint)}
+.src-foot a:hover{color:var(--muted);text-decoration-color:var(--muted)}
 @media(max-width:600px){
   /* On phone the canvas is a short strip above the conversation; the figure + its one line must
      fit WITHIN it, so the sun shrinks to a warm anchor and the margins tighten. */
@@ -508,6 +531,7 @@ body.paused #plate .pbactions button,body.paused #compose button.send{opacity:.5
     <textarea id="task" placeholder="Let's move." aria-label="message to CIRO"></textarea>
     <button id="send" class="send" type="button" onclick="go()">Send</button>
   </div>
+  <p class="src-foot"><a href="https://github.com/ricogut-rgb/ciro" rel="noopener">Source &middot; AGPL-3.0</a></p>
 </div>
 <div id="say" class="sr-only" aria-live="polite"></div>
 <div id="canvas">
@@ -1940,7 +1964,11 @@ def _make_handler(manager: RunManager, token: str | None,
                 "<title>CIRO — signup</title>"
                 "<main style=\"font-family:system-ui,sans-serif;max-width:30rem;margin:3rem auto;padding:0 1rem;line-height:1.5\">"
                 f"<p>{safe}</p>"
-                "<p><a href=\"/\">back to CIRO</a></p></main>"
+                "<p><a href=\"/\">back to CIRO</a></p>"
+                "<p style=\"font-size:12px;color:#8a8275;margin-top:1.6rem\">"
+                "<a href=\"https://github.com/ricogut-rgb/ciro\" rel=\"noopener\" "
+                "style=\"color:#8a8275\">Source &middot; AGPL-3.0</a></p>"
+                "</main>"
             ).encode("utf-8")
             self.send_response(code)
             self.send_header("Content-Type", "text/html; charset=utf-8")
