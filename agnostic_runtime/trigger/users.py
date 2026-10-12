@@ -19,6 +19,23 @@ that this field is a historical self-label, not a live posture input. The per-tu
 stamp uses the shorter name `role` because at that altitude it IS the operative
 value for that turn.
 
+VALUE SHAPE — `self:<text>`. The attestation travels with the value. Writers here
+(``seed_user``, ``update_declared_role``) normalize every incoming declared_role to
+the `self:` prefix at write-time; the raw read-back carries the prefix so any future
+handler that does ``if role == 'attorney'`` fails against ``self:attorney`` and must
+EXPLICITLY opt into reading a self-attested label. That is the right texture: this
+field is self-attestation, and the shape says so. The wall sits at the value's
+shape (a class-wall), not an enumeration of roles that would need maintaining as
+new ones appear. Legacy bare values that pre-exist on disk are tolerated by readers
+but are not written anymore — the display helper strips the prefix either way, and
+code gating on exact values will route the prefixed form through its own opt-in.
+
+DISPLAY — surfaces that render the self-label to a reader route the value through
+``display_role()``, which strips the ``self:`` prefix (and tolerates legacy bare
+values and None). Metadata hand-offs (``manager.start(role=...)``, structured logs)
+should pass the RAW value, not the stripped one — the prefix is a feature at that
+altitude.
+
 No signup form yet — the encounter should be bare. Users are seeded manually with:
 
     python -m agnostic_runtime.trigger.users seed EMAIL [ROLE]
@@ -78,6 +95,47 @@ def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S%z")
 
 
+_SELF_PREFIX = "self:"
+
+
+def _normalize_declared_role(value: Optional[str]) -> str:
+    """Normalize a declared_role into its on-disk value shape.
+
+    The attestation travels with the value: every write becomes ``self:<text>``.
+    If the caller already passed a ``self:``-prefixed value (e.g. an existing
+    row being re-written through this path), we keep it as-is rather than
+    double-prefixing to ``self:self:attorney``. Empty / None collapses to
+    ``self:stranger`` — the honest floor for "no label given".
+    """
+    trimmed = (value or "").strip()
+    if not trimmed:
+        return _SELF_PREFIX + "stranger"
+    if trimmed.startswith(_SELF_PREFIX):
+        return trimmed
+    return _SELF_PREFIX + trimmed
+
+
+def display_role(declared_role: Optional[str]) -> str:
+    """Strip the ``self:`` prefix for arriver-visible rendering.
+
+    Tolerates both the new prefixed form AND legacy bare values that may
+    pre-exist on disk from before the prefix was introduced; returns
+    ``"stranger"`` for None / empty so a surface never has to None-check.
+    Metadata hand-offs (``manager.start(role=...)``, structured logs) should
+    pass the RAW value — the prefix is a feature at that altitude. This helper
+    exists for display paths only.
+    """
+    if not declared_role:
+        return "stranger"
+    value = declared_role.strip()
+    if not value:
+        return "stranger"
+    if value.startswith(_SELF_PREFIX):
+        stripped = value[len(_SELF_PREFIX):].strip()
+        return stripped or "stranger"
+    return value
+
+
 def seed_user(email: str, declared_role: str = "stranger",
               token: Optional[str] = None) -> dict:
     """Append one user-birth event. Returns the full record so the caller can
@@ -95,7 +153,7 @@ def seed_user(email: str, declared_role: str = "stranger",
     rec = {
         "id": uid,
         "email": email,
-        "declared_role": declared_role or "stranger",
+        "declared_role": _normalize_declared_role(declared_role),
         "token": tok,
         "created_at": _now(),
     }
@@ -123,7 +181,7 @@ def update_declared_role(user_id: str, new_declared_role: str) -> Optional[dict]
     new_row = {
         "id": user_id,
         "email": prior.get("email", ""),
-        "declared_role": new_declared_role or "stranger",
+        "declared_role": _normalize_declared_role(new_declared_role),
         "token": prior.get("token", ""),
         "created_at": _now(),
     }
