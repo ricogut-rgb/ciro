@@ -2318,19 +2318,10 @@ def _make_handler(manager: RunManager, token: str | None,
             path = self.path.rstrip("/") or "/"
             parts = [p for p in path.split("/") if p]
 
-            # Public landing (no auth required). MVP (2) honest-wait: a signed-up arriver
-            # (valid cookie-token) is redirected to /signed_up — the console is deliberately
-            # not the post-signup surface. First-visit arrivers still see the reception.
+            # Public landing (no auth required). A signed-up arriver clicking back to the
+            # landing is making an explicit navigation request — honor it. /signed_up is
+            # where they're routed on signup, not where they must stay regardless of intent.
             if parts in ([], ["console"]):
-                cookie_token = self._cookie_token()
-                if cookie_token:
-                    uid, _role = self._resolve_user_token(cookie_token)
-                    if uid is not None:
-                        self.send_response(302)
-                        self.send_header("Location", "/signed_up")
-                        self.send_header("Content-Length", "0")
-                        self.end_headers()
-                        return
                 self._send_html(200, _CONSOLE_HTML)
                 return
 
