@@ -21,7 +21,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
 from agnostic_runtime.trigger import plate as plate_mod
-from agnostic_runtime.trigger.invites import consume_code as consume_invite_code
+from agnostic_runtime.trigger import invites as _invites
 from agnostic_runtime.trigger.runs import RunManager
 from agnostic_runtime.trigger.users import seed_user, user_for_email, user_for_token
 
@@ -1737,29 +1737,6 @@ def _make_handler(manager: RunManager, token: str | None,
                 return None, False
             return data, True
 
-        def _invite_is_live(self, code: str) -> bool:
-            """Probe whether an invite code exists and is unused, WITHOUT consuming it.
-
-            Called before the email-collision check so that path only runs for arrivers
-            who already proved they belong here. We re-check at consume-time (which is
-            atomic), so a race between probe and consume cannot double-admit — the
-            consume returns False and the second arriver's cookie still works (their
-            user is created), but the code is gone.
-            """
-            from agnostic_runtime.trigger import invites as _invites
-            import hmac
-            if not code:
-                return False
-            for rec in _invites.list_codes():
-                if not isinstance(rec, dict):
-                    continue
-                if rec.get("used_at"):
-                    continue
-                stored = rec.get("code", "")
-                if isinstance(stored, str) and stored and hmac.compare_digest(stored, code):
-                    return True
-            return False
-
         def _signup_reply(self, code: int, payload: dict[str, Any]) -> None:
             """Error path on /signup. Honors Accept: when the <noscript> form
             submitted (text/html expected), reply as a tiny HTML page the arriver
@@ -1812,11 +1789,16 @@ def _make_handler(manager: RunManager, token: str | None,
             return "text/html" in accept
 
         def _send_signup_html(self, code: int, message: str) -> None:
+            # html.escape — defense-in-depth. Current callers pass fixed strings,
+            # but a future caller interpolating a user-supplied field would leak
+            # the field into the DOM as HTML without this. One wrap closes it.
+            import html as _html
+            safe = _html.escape(message, quote=True)
             body = (
                 "<!doctype html><meta charset=utf-8>"
                 "<title>CIRO — signup</title>"
                 "<main style=\"font-family:system-ui,sans-serif;max-width:30rem;margin:3rem auto;padding:0 1rem;line-height:1.5\">"
-                f"<p>{message}</p>"
+                f"<p>{safe}</p>"
                 "<p><a href=\"/\">back to CIRO</a></p></main>"
             ).encode("utf-8")
             self.send_response(code)
@@ -1837,11 +1819,21 @@ def _make_handler(manager: RunManager, token: str | None,
             # ORDER OF CHECKS (deliberate):
             #   1. incident pause → 503
             #   2. body / email shape → 400
-            #   3. invite code presence → 400
-            #   4. invite code validity → 403 (generic — doesn't say "unknown" vs "used")
-            #   5. email already registered → 409
-            #   6. seed → 201 + cookie
-            #   7. ONLY on success: consume the invite code (one-way admission)
+            #   3. invite code presence or validity → 403 ("bad_invite" — same shape
+            #      for empty, missing, and bad; a JSON probe cannot tell "didn't send"
+            #      from "sent nothing matching", closing the enumeration oracle)
+            #   4. email already registered → 409
+            #   5. seed → 201 + cookie
+            #   6. ONLY on success: consume the invite code (one-way admission)
+            #
+            # CRITICAL SECTION. Steps 3→6 all run inside a SINGLE held
+            # ``invite_locked_section()``. The previous shape probed liveness BEFORE
+            # taking the lock, which left a TOCTOU window: two arrivers typing the
+            # same code with different emails could both pass the probe, both seed a
+            # user record, and one consume lose — leaving an orphan user slot that
+            # nobody owns. Holding the flock across probe + collision + seed + consume
+            # restores the one-slot-one-admission invariant: the second arriver blocks
+            # on the lock, re-probes after the first consumes, and sees bad_invite.
             #
             # The invite gate stands BEFORE the email-collision check, so the collision
             # branch is only reachable to arrivers who already proved they belong here.
@@ -1872,41 +1864,44 @@ def _make_handler(manager: RunManager, token: str | None,
                     return self._signup_reply(400, {"error": "bad_email"})
                 declared_role = (data.get("declared_role") or "").strip() or "stranger"
                 invite = (data.get("invite_code") or "").strip()
-                if not invite:
-                    return self._signup_reply(403, {
-                        "error": "invite_required",
-                        "message": "Signup requires an invite."})
-                # Probe the code WITHOUT consuming it. We only consume after seed succeeds,
-                # so a 409 (email collision) doesn't burn the code — the arriver can fix
-                # the email and retry with the same invite. Probing here keeps the oracle
-                # closed: an invalid-code arriver never reaches the email-collision branch.
-                if not self._invite_is_live(invite):
-                    return self._signup_reply(403, {
-                        "error": "bad_invite",
-                        "message": "Signup requires an invite."})
-                # NOT idempotent on email: refuse re-signup with an existing email. An
-                # earlier draft returned the existing user's token on the cookie — which
-                # would let anyone impersonate anyone just by knowing their email. The
-                # honest minimum is to refuse and point at the (NAMED-not-built) sign-in
-                # path: a magic-link flow carrying proof-of-email, which S1 does NOT ship.
-                if user_for_email(email) is not None:
-                    return self._signup_reply(409, {
-                        "error": "email_in_use",
-                        "message": "That email is already signed up. "
-                                   "Sign-in by link is being wired."})
-                try:
-                    rec = seed_user(email, declared_role)
-                except ValueError:
-                    return self._signup_reply(400, {"error": "bad_email"})
-                # Consume the invite only AFTER the user record is on disk. consume_code
-                # is atomic under flock; a lost race here (two arrivers using the same
-                # code at the same instant) means one of them gets through and the other's
-                # consume returns False — their user record is still created, but the
-                # invite is gone, so this is a one-way admission for the slot. We log the
-                # race via the audit log channel the deployer wires in; the arriver's
-                # path still works. The alternative (consume FIRST then seed) burns codes
-                # on seed failures, which is worse.
-                consume_invite_code(invite, rec["id"])
+                # Hold the invite flock for the ENTIRE critical section. If fcntl is
+                # unavailable (Windows) the CM yields False — we still run the same
+                # branches; correctness holds against the single-code-double-use
+                # pathology via _write_atomic's rename, and the TOCTOU window is the
+                # same narrow one the brief notes is not what the beta defends against.
+                with _invites.invite_locked_section():
+                    # (3) Missing OR invalid invite collapse to one response. The
+                    #     previous shape returned "invite_required" vs "bad_invite"
+                    #     — a JSON probe could distinguish them, oraclising the
+                    #     field. Now the response is the same for both.
+                    if not invite or not _invites.is_code_live(invite):
+                        _invites.record_failed_probe(
+                            "bad_invite" if invite else "no_invite")
+                        return self._signup_reply(403, {
+                            "error": "bad_invite",
+                            "message": "Signup requires an invite."})
+                    # (4) NOT idempotent on email: refuse re-signup with an existing
+                    #     email. Returning the existing user's token would let anyone
+                    #     impersonate anyone just by knowing their email. The honest
+                    #     minimum is to refuse and point at the (NAMED-not-built)
+                    #     sign-in path: a magic-link flow carrying proof-of-email,
+                    #     which S1 does NOT ship.
+                    if user_for_email(email) is not None:
+                        return self._signup_reply(409, {
+                            "error": "email_in_use",
+                            "message": "That email is already signed up. "
+                                       "Sign-in by link is being wired."})
+                    # (5) Seed the user.
+                    try:
+                        rec = seed_user(email, declared_role)
+                    except ValueError:
+                        return self._signup_reply(400, {"error": "bad_email"})
+                    # (6) Consume the invite only after the user record is on disk.
+                    #     Still inside the lock, so a race with another arriver using
+                    #     the same code has already blocked on the flock above and
+                    #     will re-probe after we release and see bad_invite.
+                    #     ``_consume_locked`` requires the lock we hold.
+                    _invites._consume_locked(invite, rec["id"])
                 self._signup_success(rec)
                 return
             if not self._authorized():
