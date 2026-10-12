@@ -403,15 +403,15 @@ body.paused #plate .pbactions button,body.paused #compose button.send{opacity:.5
 </style></head><body>
 <h1 class="sr-only">CIRO</h1>
 <div id="dock">
-  <div class="brand"><span class="sig">7</span><button class="gear" onclick="cfg()" title="settings">&#9881;</button></div>
+  <div class="brand"><span class="sig">CIRO</span><button class="gear" onclick="cfg()" title="settings">&#9881;</button></div>
   <p class="sub">Not sure where to start? Click in the box and hit enter &mdash; signup opens when you&rsquo;re ready.</p>
   <div id="signup" class="cfg" style="display:none" role="dialog" aria-modal="true" aria-labelledby="su-heading">
     <p class="cfg-welcome" id="su-heading">The space opens by invite. If you were sent one, bring it in.</p>
     <label for="su-invite">invite</label><input id="su-invite" type="text" placeholder="paste the code you were sent" autocomplete="off" autocapitalize="off" spellcheck="false">
     <label for="su-email">email</label><input id="su-email" type="email" placeholder="you@wherever" autocomplete="email" inputmode="email">
-    <label for="su-role">i&rsquo;m a&hellip; <span style="text-transform:none;letter-spacing:0;color:var(--faint)">(optional)</span></label><input id="su-role" type="text" placeholder="builder, writer, carrier of a decision" autocomplete="off">
+    <label for="su-role">i&rsquo;m a&hellip; <span style="text-transform:none;letter-spacing:0;color:var(--faint)">(optional)</span></label><input id="su-role" type="text" placeholder="builder, writer, founder" autocomplete="off">
     <button id="su-go" type="button" onclick="signup()">Sign up</button>
-    <p class="muted" style="font-size:12px;line-height:1.55;margin-top:.7rem">Your email stays with CIRO &mdash; not sold, not tracked. Export will be yours.</p>
+    <p class="muted" style="font-size:12px;line-height:1.55;margin-top:.7rem">Your email stays on CIRO&rsquo;s server &mdash; not sold, not tracked. Export will be yours.</p>
     <p id="su-err" class="err" role="alert" style="font-size:13px;margin:.4rem 0 0;display:none"></p>
     <button class="sec" type="button" onclick="dsignup()">not now</button>
     <noscript>
@@ -425,7 +425,7 @@ body.paused #plate .pbactions button,body.paused #compose button.send{opacity:.5
     </noscript>
   </div>
   <div id="cfg" class="cfg" style="display:none">
-    <p class="cfg-welcome">The invite you were sent carries what you need. If you arrived here first — hi. The space waits.</p>
+    <p class="cfg-welcome">The invite you were sent carries what you need. If you arrived here first — hi.</p>
     <!-- Operator access lives behind an intentional disclosure. The arriver never sees a
          password-paste field adjacent to the reception copy; an operator who knows they need
          to paste a bearer opens the summary. The click IS the admit-grammar: arriver uses
@@ -447,7 +447,7 @@ body.paused #plate .pbactions button,body.paused #compose button.send{opacity:.5
   <div id="convo"></div>
   <div id="compose">
     <button id="jump" type="button" hidden aria-label="new messages below, jump to the newest">&#8595; new</button>
-    <textarea id="task" placeholder="Let's move." aria-label="message to 7"></textarea>
+    <textarea id="task" placeholder="Let's move." aria-label="message to CIRO"></textarea>
     <button id="send" class="send" type="button" onclick="go()">Send</button>
   </div>
 </div>
