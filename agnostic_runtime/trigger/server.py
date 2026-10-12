@@ -881,7 +881,7 @@ async function poll(rid, live){
       health=doorHealth(d);
     }else{
       // Closed — no daemon, no present seat.
-      msg='At the door. No one is listening yet — arm it with:\n\nbash agnostic_runtime/trigger/cathedral_wait.sh';
+      msg='The Cathedral is being wired. Someone will meet you here soon.';
       health=doorHealth(d);
     }
     // The 2s re-render: soft, so it never moves the reader or drops a selection they are making in it.
