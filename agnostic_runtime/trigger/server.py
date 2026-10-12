@@ -71,6 +71,57 @@ a:hover{color:var(--ink)}
 """
 
 
+# MVP (2) honest-wait: the post-signup held surface. CIRO isn't live yet; signup
+# lands here instead of the Cathedral attendant. Two variants — one for arrivers who
+# left an email (we promise to write), one for anonymous arrivers (come back soon).
+# Same register as _WHY_HOLDING_HTML: paper/serif, held, no overselling. {BODY} is
+# substituted per-variant at request time; everything else stays shared.
+_HONEST_WAIT_SHELL = r"""<!doctype html><html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CIRO</title>
+<style>
+:root{--ground:#f4ede1;--ink:#2b241d;--muted:#6e604d;--serif:'Iowan Old Style','Charter','Palatino','Georgia',serif}
+@media(prefers-color-scheme:dark){:root{--ground:#17120d;--ink:#ebe0cd;--muted:#9d8f77}}
+html,body{height:100%;margin:0}
+body{background:var(--ground);color:var(--ink);font-family:var(--serif);display:flex;align-items:center;justify-content:center;padding:2rem;line-height:1.6}
+main{max-width:28rem;text-align:center}
+h1{font-style:italic;font-weight:400;font-size:30px;margin:0 0 1.4rem;letter-spacing:.01em}
+p{font-size:17px;color:var(--muted);margin:0 0 1rem}
+a{color:var(--muted);text-decoration:underline;text-underline-offset:3px}
+a:hover{color:var(--ink)}
+.back{margin-top:2.5rem;font-size:14px}
+</style>
+</head><body><main>
+__BODY__
+</main></body></html>
+"""
+
+_HONEST_WAIT_EMAIL_BODY = (
+    "<h1>We have you.</h1>"
+    "<p>CIRO isn&rsquo;t live yet. When it opens, we&rsquo;ll email you "
+    "at the address you gave us.</p>"
+    "<p class=\"back\"><a href=\"/why\">&larr; back</a></p>"
+)
+
+_HONEST_WAIT_ANON_BODY = (
+    "<h1>We have you.</h1>"
+    "<p>CIRO isn&rsquo;t live yet. Come back soon &mdash; the door opens here.</p>"
+    "<p class=\"back\"><a href=\"/why\">&larr; back</a></p>"
+)
+
+
+def _honest_wait_html(has_email: bool) -> str:
+    """Pick the honest-wait body for this arriver's standing (email given vs not).
+
+    Both bodies share the shell above — the only difference is the one line that
+    tells them how we'll (or won't) reach them. Keeping the shell shared means
+    the two variants cannot drift in register or in markup — they drift only in
+    the honest sentence that distinguishes them.
+    """
+    body = _HONEST_WAIT_EMAIL_BODY if has_email else _HONEST_WAIT_ANON_BODY
+    return _HONEST_WAIT_SHELL.replace("__BODY__", body)
+
+
 _CONSOLE_HTML = r"""<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>CIRO</title>
@@ -406,10 +457,12 @@ body.paused #plate .pbactions button,body.paused #compose button.send{opacity:.5
   <div class="brand"><span class="sig">CIRO</span><button class="gear" onclick="cfg()" title="settings">&#9881;</button></div>
   <p class="sub">Not sure where to start? Click in the box and hit enter &mdash; signup opens when you&rsquo;re ready.</p>
   <div id="signup" class="cfg" style="display:none" role="dialog" aria-modal="true" aria-labelledby="su-heading">
-    <p class="cfg-welcome" id="su-heading">The space opens by invite. If you were sent one, bring it in.</p>
-    <label for="su-invite">invite</label><input id="su-invite" type="text" placeholder="paste the code you were sent" autocomplete="off" autocapitalize="off" spellcheck="false">
-    <label for="su-email">email</label><input id="su-email" type="email" placeholder="you@wherever" autocomplete="email" inputmode="email">
+    <p class="cfg-welcome" id="su-heading">Sign up. CIRO isn&rsquo;t live yet &mdash; we&rsquo;ll let you know when it opens.</p>
+    <label for="su-invite">invite <span style="text-transform:none;letter-spacing:0;color:var(--faint)">(if you have one &mdash; otherwise skip)</span></label><input id="su-invite" type="text" placeholder="paste the code you were sent" autocomplete="off" autocapitalize="off" spellcheck="false">
+    <label for="su-email">email <span style="text-transform:none;letter-spacing:0;color:var(--faint)">(optional)</span></label><input id="su-email" type="email" placeholder="you@wherever" autocomplete="email" inputmode="email">
+    <p class="muted" style="font-size:12px;line-height:1.55;margin:.2rem 0 .6rem">optional &mdash; we only use this to tell you when CIRO opens.</p>
     <label for="su-role">i&rsquo;m a&hellip; <span style="text-transform:none;letter-spacing:0;color:var(--faint)">(optional)</span></label><input id="su-role" type="text" placeholder="builder, writer, founder" autocomplete="off">
+    <input id="su-chip" type="hidden" value="">
     <button id="su-go" type="button" onclick="signup()">Sign up</button>
     <p class="muted" style="font-size:12px;line-height:1.55;margin-top:.7rem">Your email stays on CIRO&rsquo;s server &mdash; not sold, not tracked. Export will be yours.</p>
     <p id="su-err" class="err" role="alert" style="font-size:13px;margin:.4rem 0 0;display:none"></p>
@@ -417,9 +470,10 @@ body.paused #plate .pbactions button,body.paused #compose button.send{opacity:.5
     <noscript>
       <p class="muted" style="font-size:12px;margin:.7rem 0 .4rem">Your browser has JavaScript off. You can still sign up:</p>
       <form action="/signup" method="post" enctype="application/x-www-form-urlencoded">
-        <label for="ns-invite">invite</label><input id="ns-invite" name="invite_code" type="text" required>
-        <label for="ns-email">email</label><input id="ns-email" name="email" type="email" required>
+        <label for="ns-invite">invite (optional)</label><input id="ns-invite" name="invite_code" type="text">
+        <label for="ns-email">email (optional)</label><input id="ns-email" name="email" type="email">
         <label for="ns-role">i&rsquo;m a&hellip; (optional)</label><input id="ns-role" name="declared_role" type="text">
+        <input name="chip" type="hidden" value="">
         <button type="submit">Sign up</button>
       </form>
     </noscript>
@@ -552,11 +606,16 @@ async function signout(){
 // in JS. On 400 we show the per-field error inline; on 503 (incident pause) we say so.
 function osignup(){
   $('signup').style.display='block';
+  // Pre-populate the hidden chip-stamp from localStorage so a chip-click → page-reload →
+  // open-signup path still carries which chip the arriver first touched. Primary carrier
+  // is the hidden input (survives form submit); localStorage is the pre-signup backup.
+  const chipHidden=$('su-chip');
+  if(chipHidden&&!chipHidden.value){const c=sget('chip7');if(c)chipHidden.value=c;}
   // Prefer the invite field — it's the first thing the arriver fills, and screen-readers
   // announce the dialog heading via aria-labelledby when focus lands inside it.
   const first=$('su-invite')||$('su-email');
   if(first)setTimeout(()=>first.focus(),50);
-  const say=$('say');if(say)say.textContent='signup opened — invite required';
+  const say=$('say');if(say)say.textContent='signup opened';
 }
 function dsignup(){$('signup').style.display='none';const er=$('su-err');if(er){er.style.display='none';er.textContent=''}}
 function sherr(msg){const er=$('su-err');if(!er)return;er.textContent=msg;er.style.display='block'}
@@ -564,20 +623,29 @@ async function signup(){
   const inv=($('su-invite').value||'').trim();
   const em=($('su-email').value||'').trim();
   const dr=($('su-role').value||'').trim();
-  if(!inv){sherr('an invite code is needed to sign up');$('su-invite').focus();return}
-  if(!em||em.indexOf('@')<1||em.indexOf('@')===em.length-1){sherr('that email looks off');$('su-email').focus();return}
+  const chip=(($('su-chip')&&$('su-chip').value)||'').trim();
+  // Email is OPTIONAL now (honest-wait phase); only shape-check if the arriver typed one.
+  if(em&&(em.indexOf('@')<1||em.indexOf('@')===em.length-1)){sherr('that email looks off');$('su-email').focus();return}
   const btn=$('su-go');if(btn){btn.disabled=true;btn.textContent='signing up…'}
   try{
-    const r=await fetch('/signup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:em,declared_role:dr,invite_code:inv})});
+    const r=await fetch('/signup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:em,declared_role:dr,invite_code:inv,chip:chip})});
     if(r.status===503){sherr('CIRO is paused for maintenance — try again shortly.');return}
     if(r.status===400){sherr('that email looks off');return}
-    if(r.status===403){sherr('this space opens by invite — that code did not match a live one.');$('su-invite').focus();return}
+    if(r.status===403){
+      // 403 can only come back if an invite was provided and it did not match a live one.
+      // Open signup (empty invite) never 403s. Say so plainly, keep the door open.
+      sherr('that invite code did not match a live one — you can still sign up without one.');
+      $('su-invite').focus();
+      return;
+    }
     if(r.status===409){sherr('that email is already signed up. the sign-in link flow isn’t wired yet — ask whoever sent your invite to help you back in.');return}
     if(!r.ok){sherr('signup did not go through — try again.');return}
     AUTHED=true;
-    // The HttpOnly cookie is set; reload so the authed surface renders from a clean boot
-    // (loadPlate, draft restore, convo state) rather than patching a half-authed in-page view.
-    location.reload();
+    // Honest-wait: the server redirects post-signup to /signed_up (we're not live yet).
+    // Follow its guidance; fall back to /signed_up if the JSON didn't carry a redirect.
+    let dest='/signed_up';
+    try{const j=await r.json();if(j&&j.redirect)dest=j.redirect;}catch(e){}
+    location.href=dest;
   }catch(e){sherr('signup did not go through — try again.')}
   finally{if(btn){btn.disabled=false;btn.textContent='Sign up'}}
 }
@@ -589,6 +657,11 @@ function chip(name){
   // Programmatic .value doesn't fire 'input' — persist the draft by hand so the seed survives
   // the signup → reload round-trip (otherwise the arriver signs up and the chip's seed is gone).
   sset(dkey(),task.value);
+  // Record the chip-stamp two ways: the hidden form input (primary carrier — survives
+  // submit even if JS is partial), and localStorage (backup — survives a page reload
+  // between chip-click and signup-open). The server reads the hidden input via the POST body.
+  const chipHidden=$('su-chip');if(chipHidden)chipHidden.value=name||'';
+  sset('chip7',name||'');
   grow();sync();task.focus();
   try{task.setSelectionRange(task.value.length,task.value.length)}catch(e){}
   if(!tok.value&&!AUTHED)osignup();
@@ -1810,16 +1883,17 @@ def _make_handler(manager: RunManager, token: str | None,
             self._send(code, payload)
 
         def _signup_success(self, rec: dict) -> None:
-            """Success path. Sets the auth cookie; replies JSON (JS reload) or an
-            HTML redirect page (noscript fallback)."""
+            """Success path. Sets the auth cookie; replies JSON (JS → /signed_up) or an
+            HTML redirect page (noscript fallback → /signed_up). In MVP (2) honest-wait,
+            the post-signup destination is the explicit held page — not the console."""
             cookie = self._token_cookie_header(rec["token"])
             if self._wants_html():
                 body = (
                     "<!doctype html><meta charset=utf-8>"
-                    "<meta http-equiv=refresh content=\"0;url=/\">"
+                    "<meta http-equiv=refresh content=\"0;url=/signed_up\">"
                     "<title>CIRO — signed up</title>"
                     "<p style=\"font-family:system-ui,sans-serif;padding:2rem\">"
-                    "signed up. <a href=\"/\">Open CIRO</a>.</p>"
+                    "signed up. <a href=\"/signed_up\">Continue</a>.</p>"
                 ).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -1828,7 +1902,7 @@ def _make_handler(manager: RunManager, token: str | None,
                 self.end_headers()
                 self.wfile.write(body)
                 return
-            body = json.dumps({"ok": True, "redirect": "/"}).encode("utf-8")
+            body = json.dumps({"ok": True, "redirect": "/signed_up"}).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
@@ -1916,15 +1990,18 @@ def _make_handler(manager: RunManager, token: str | None,
                 if not ok:
                     return
                 email = (data.get("email") or "").strip()
-                # Basic shape only: non-empty, has '@' with text on both sides, ≤254 chars
-                # (RFC 5321 practical cap). Deep validation (MX, confirm-email flow) is
-                # intentionally out-of-scope for S1 — this is the honest floor.
-                if (not email or "@" not in email
-                        or email.startswith("@") or email.endswith("@")
-                        or len(email) > 254 or " " in email):
-                    return self._signup_reply(400, {"error": "bad_email"})
+                # MVP (2) honest-wait: email is OPTIONAL. Empty means "no email given" and
+                # becomes None in the record (we promise nothing we cannot deliver). If
+                # the arriver DID type one, shape-check it — the floor is unchanged:
+                # non-empty, has '@' with text on both sides, ≤254 chars, no spaces.
+                if email:
+                    if ("@" not in email
+                            or email.startswith("@") or email.endswith("@")
+                            or len(email) > 254 or " " in email):
+                        return self._signup_reply(400, {"error": "bad_email"})
                 declared_role = (data.get("declared_role") or "").strip() or "stranger"
                 invite = (data.get("invite_code") or "").strip()
+                chip = (data.get("chip") or "").strip() or None
                 # Hold the invite flock for the ENTIRE critical section. If fcntl is
                 # unavailable (Windows) the CM yields a token with .acquired=False —
                 # we still run the same branches; correctness holds against the
@@ -1933,46 +2010,52 @@ def _make_handler(manager: RunManager, token: str | None,
                 # what the beta defends against. The yielded token is passed to
                 # ``consume_held`` below so the "caller holds the lock" invariant
                 # is structural (type-checked at the call site), not docstring-only.
+                # MVP (2) honest-wait: the invite is a PRIORITY-FLAG now, not a gate.
+                #   - If invite present AND live  → consumed, priority=True.
+                #   - If invite present AND bad   → 403 (enum-oracle preserved; an
+                #     invalid code never silently passes). JS surfaces "did not match
+                #     a live one — you can still sign up without one".
+                #   - If invite empty             → open signup, priority=False.
+                # The flock still wraps probe + collision + seed + consume: the invite
+                # path's TOCTOU invariant is unchanged where it still applies, and
+                # the collision check sits inside the lock so a concurrent email
+                # race lands on the same honest 409.
+                priority = False
                 with _invites.invite_locked_section() as _lock:
-                    # (3) Missing OR invalid invite collapse to one response. The
-                    #     previous shape returned "invite_required" vs "bad_invite"
-                    #     — a JSON probe could distinguish them, oraclising the
-                    #     field. Now the response is the same for both.
-                    if not invite or not _invites.is_code_live(invite):
-                        _invites.record_failed_probe(
-                            "bad_invite" if invite else "no_invite")
-                        return self._signup_reply(403, {
-                            "error": "bad_invite",
-                            "message": "Signup requires an invite."})
-                    # (4) NOT idempotent on email: refuse re-signup with an existing
-                    #     email. Returning the existing user's token would let anyone
-                    #     impersonate anyone just by knowing their email. The honest
-                    #     minimum is to refuse and point at the (NAMED-not-built)
-                    #     sign-in path: a magic-link flow carrying proof-of-email,
-                    #     which S1 does NOT ship. The copy names the dead-end
-                    #     honestly and routes the arriver to the channel they
-                    #     already used (the invite's sender) rather than a
-                    #     here-not-named operator — that is both the honest
-                    #     geometry (whoever sent the invite can bridge) and
-                    #     avoids identifying the operator on the public surface.
-                    if user_for_email(email) is not None:
+                    if invite:
+                        if not _invites.is_code_live(invite):
+                            _invites.record_failed_probe("bad_invite")
+                            return self._signup_reply(403, {
+                                "error": "bad_invite",
+                                "message": "That invite code did not match a "
+                                           "live one — you can still sign up "
+                                           "without one."})
+                        priority = True
+                    # Email collision check: only applies when an email was given.
+                    # Without an email there's no identity to collide with.
+                    if email and user_for_email(email) is not None:
                         return self._signup_reply(409, {
                             "error": "email_in_use",
                             "message": "That email is already signed up. "
                                        "The sign-in link flow isn't wired yet "
                                        "— ask whoever sent your invite to help "
                                        "you back in."})
-                    # (5) Seed the user.
+                    # Seed. Email is None when the arriver didn't give one — the
+                    # record then carries no address, and the honest-wait page
+                    # tells them "come back soon" instead of "we'll email you".
                     try:
-                        rec = seed_user(email, declared_role)
+                        rec = seed_user(
+                            email or None,
+                            declared_role,
+                            chip=chip,
+                            priority=priority,
+                        )
                     except ValueError:
                         return self._signup_reply(400, {"error": "bad_email"})
-                    # (6) Consume the invite only after the user record is on disk.
-                    #     Still inside the lock, so a race with another arriver using
-                    #     the same code has already blocked on the flock above and
-                    #     will re-probe after we release and see bad_invite.
-                    #     ``consume_held`` requires the lock token we hold.
-                    _invites.consume_held(_lock, invite, rec["id"])
+                    # Consume the invite only after the user record is on disk,
+                    # still inside the lock. Open-signup (no invite) skips this.
+                    if invite:
+                        _invites.consume_held(_lock, invite, rec["id"])
                 self._signup_success(rec)
                 return
 
@@ -2190,9 +2273,37 @@ def _make_handler(manager: RunManager, token: str | None,
             path = self.path.rstrip("/") or "/"
             parts = [p for p in path.split("/") if p]
 
-            # Public console page (no auth): plain HTML that then makes token'd API calls.
+            # Public landing (no auth required). MVP (2) honest-wait: a signed-up arriver
+            # (valid cookie-token) is redirected to /signed_up — the console is deliberately
+            # not the post-signup surface. First-visit arrivers still see the reception.
             if parts in ([], ["console"]):
+                cookie_token = self._cookie_token()
+                if cookie_token:
+                    uid, _role = self._resolve_user_token(cookie_token)
+                    if uid is not None:
+                        self.send_response(302)
+                        self.send_header("Location", "/signed_up")
+                        self.send_header("Content-Length", "0")
+                        self.end_headers()
+                        return
                 self._send_html(200, _CONSOLE_HTML)
+                return
+
+            # /signed_up — honest-wait post-signup surface. Cookie-authed only (so a bare
+            # URL probe without the signup cookie just goes back to the landing — the page
+            # is not a public teaser). We branch on whether the record carries an email:
+            # with one we promise to write; without, we promise nothing we can't deliver.
+            if parts == ["signed_up"]:
+                cookie_token = self._cookie_token()
+                rec = user_for_token(cookie_token) if cookie_token else None
+                if not rec:
+                    self.send_response(302)
+                    self.send_header("Location", "/")
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
+                has_email = bool((rec.get("email") or "").strip())
+                self._send_html(200, _honest_wait_html(has_email))
                 return
 
             # /why — the article the landing's link promises. Public, no-auth, holding page
