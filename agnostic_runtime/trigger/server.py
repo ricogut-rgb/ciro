@@ -97,9 +97,13 @@ __BODY__
 """
 
 _HONEST_WAIT_EMAIL_BODY = (
+    # Register-honest: record-only α holds the address; the delivery channel is
+    # unshipped. "on record" acknowledges what we actually did (recorded it)
+    # without naming an unbuilt mechanism (SMTP send). Mirrors the paper/serif
+    # register of the anon-body — "the door opens here" — one line apart.
     "<h1>We have you.</h1>"
-    "<p>CIRO isn&rsquo;t live yet. When it opens, we&rsquo;ll email you "
-    "at the address you gave us.</p>"
+    "<p>CIRO isn&rsquo;t live yet. Your email is on record "
+    "for when the door opens.</p>"
     "<p class=\"back\"><a href=\"/why\">&larr; back</a></p>"
 )
 
@@ -590,9 +594,11 @@ async function signout(){
     const r=await fetch('/signout',{method:'POST',headers:H()});
     if(!r.ok){fail('sign-out did not go through — try again.');return;}
     // Clear local state: the pasted ops token ('t7'), the conversation pointer ('c7'),
-    // and the compose draft for that conversation. If 't7' survived, the next visit
-    // would silently re-authenticate as the ops role; dropping it is the honest exit.
-    sdel('t7');sdel(dkey());sdel('c7');tok.value='';
+    // the compose draft for that conversation, AND the chip-stamp ('chip7' — the chip
+    // NAME the arriver first touched). If 't7' survived, the next visit would silently
+    // re-authenticate as the ops role; if 'chip7' survived, user A's chip-stamp would
+    // linger for arriver B on the same browser. Dropping both is the honest exit.
+    sdel('t7');sdel(dkey());sdel('c7');sdel('chip7');tok.value='';
     AUTHED=false;
     location.reload();
   }catch(e){fail('sign-out did not go through — try again.');}
