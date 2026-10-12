@@ -865,27 +865,33 @@ async function poll(rid, live){
   }else if(s.state==='awaiting_cathedral'){
     const d=s.door||{};
     const cond=doorCondition(d);
+    // Operator (bearer in localStorage) sees the inspection fields — door heartbeat + the raw
+    // custody-condition line. An authed arriver (invite+cookie, no bearer) sees only the
+    // arriver-honest message: the technical register (heartbeat age, "the door is closed",
+    // "standing by · not holding custody", steward-role) is for operator inspection and would
+    // read as mesh-vocab leak at the reception.
+    const isOp=!!tok.value;
     let msg, cls='bubble muted', health='';
     if(d.stranded){
       // Prefer stranded even when armed: a taken-but-unanswered ask must never read as thought.
       msg='That ask was taken but never answered. Say it again — the door will re-serve it on the next arm.';
     }else if(cond.state==='working'){
       // Only "working" (active custody + envelope match) renders as thought in progress.
-      msg='CIRO is working…'; cls='bubble muted think'; health=doorHealth(d);
+      msg='CIRO is working…'; cls='bubble muted think'; health=isOp?doorHealth(d):'';
     }else if(cond.state==='empty'){
-      // Alive but holding no custody — honest-empty. NOT the same as closed; NOT the same as working.
-      // The ask stays outstanding; a present seat or a future custody-grant will pick it up.
-      msg='The door is standing by, but not holding custody for this ask right now. '
-         +'A present session (a family seat or the operator at the terminal) will pick it up — '
-         +'or a human can sign a custody-grant and the door will keep it from then on.';
-      health=doorHealth(d);
+      // Alive but holding no custody — honest-empty. NOT the same as closed; NOT the same as
+      // working. For the arriver, both read as the same shape: wait, someone will come. The
+      // operator still sees the condition-line underneath (gated by isOp) with the fine detail.
+      msg='The Cathedral is open. Someone will meet you here soon.';
+      health=isOp?doorHealth(d):'';
     }else{
       // Closed — no daemon, no present seat.
       msg='The Cathedral is being wired. Someone will meet you here soon.';
-      health=doorHealth(d);
+      health=isOp?doorHealth(d):'';
     }
+    const condHtml=isOp?doorConditionHtml(d):'';
     // The 2s re-render: soft, so it never moves the reader or drops a selection they are making in it.
-    setLive(live,'<div class="'+cls+'"><div class="who">7</div>'+esc(msg)+health+doorConditionHtml(d)+'</div>',true);
+    setLive(live,'<div class="'+cls+'"><div class="who">7</div>'+esc(msg)+health+condHtml+'</div>',true);
     if(!d.stranded) setTimeout(()=>poll(rid,live),2000);
   }else if(s.state==='awaiting_confirm'){
     const mid=s.pending.move_id;
