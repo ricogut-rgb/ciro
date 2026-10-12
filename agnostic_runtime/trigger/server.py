@@ -426,12 +426,22 @@ body.paused #plate .pbactions button,body.paused #compose button.send{opacity:.5
   </div>
   <div id="cfg" class="cfg" style="display:none">
     <p class="cfg-welcome">The invite you were sent carries what you need. If you arrived here first — hi. The space waits.</p>
-    <label>token</label><input id="tok" type="password" placeholder="paste once">
+    <!-- Operator access lives behind an intentional disclosure. The arriver never sees a
+         password-paste field adjacent to the reception copy; an operator who knows they need
+         to paste a bearer opens the summary. The click IS the admit-grammar: arriver uses
+         cookie, operator uses bearer, neither sees the other's path by default. -->
+    <details class="cfg-advanced" id="tok-advanced"><summary>operator access</summary>
+      <label for="tok">token</label><input id="tok" type="password" placeholder="paste once" autocomplete="off">
+    </details>
     <details class="cfg-advanced"><summary>model</summary>
       <label>model</label><select id="model"><option value="cathedral">CIRO (runs on Anthropic's Claude, on this machine)</option><option value="demo">demo (scripted, zero compute)</option><option value="ollama">ollama (local, private)</option><option value="claude">claude (cloud)</option><option value="stub">stub (test)</option></select>
       <button class="sec" onclick="fresh();cfg()">start a fresh conversation</button>
     </details>
     <div id="signout-row" style="display:none;margin-top:.8rem"><button class="sec" type="button" onclick="signout()">sign out</button></div>
+    <!-- Visible failure channel for signout (and any future cfg action). #say stays as the
+         sr-only aria-live region for AT; this is the sighted-user feedback that a POST failed
+         so the UI doesn't go silent on a non-ok response. -->
+    <p id="cfg-err" class="err" role="alert" style="font-size:13px;margin:.4rem 0 0;display:none"></p>
     <button class="sec" onclick="cfg()">close</button>
   </div>
   <div id="convo"></div>
@@ -494,7 +504,21 @@ function cfg(){
   const c=$('cfg');
   const opening=c.style.display==='none';
   c.style.display=opening?'block':'none';
-  if(opening){const sr=$('signout-row');if(sr)sr.style.display=AUTHED?'block':'none';}
+  if(opening){
+    const sr=$('signout-row');if(sr)sr.style.display=AUTHED?'block':'none';
+    // A returning operator (bearer persisted in localStorage) sees the disclosure already
+    // open so they can see/rotate their field without hunting; everyone else sees a closed
+    // "operator access" summary with no password-paste field adjacent to the welcome copy.
+    const ta=$('tok-advanced');if(ta)ta.open=!!tok.value;
+    // Fresh open starts clean — a prior failure message should not greet a new cfg session.
+    cfgerr('');
+  }
+}
+// cfgerr: visible failure channel inside the cfg panel. Empty string clears + hides.
+function cfgerr(msg){
+  const er=$('cfg-err');if(!er)return;
+  if(msg){er.textContent=msg;er.style.display='block'}
+  else{er.textContent='';er.style.display='none'}
 }
 // --- signout: the merciful exit ---------------------------------------------------------------
 // POSTs /signout; the server replies 200 with a cookie-clearing Set-Cookie (Max-Age=0). We
@@ -502,17 +526,22 @@ function cfg(){
 // signup card returns naturally. Clear local draft/thread state too: a signed-out person
 // should not find their next session seeded with the prior one's compose. Non-fatal on
 // network failure: say so and leave the UI as-is rather than pretend we signed them out.
+// Failure feedback goes to BOTH the visible #cfg-err paragraph (sighted users see it under
+// the sign-out button they just clicked) AND the sr-only #say aria-live region (AT users
+// hear it). Routing only to #say — as the earlier draft did — leaves a sighted user whose
+// POST fails staring at an unchanged UI with no sign that anything happened.
 async function signout(){
+  const fail=msg=>{cfgerr(msg);const say=$('say');if(say)say.textContent=msg;};
   try{
     const r=await fetch('/signout',{method:'POST',headers:H()});
-    if(!r.ok){const say=$('say');if(say)say.textContent='sign-out did not go through — try again.';return;}
+    if(!r.ok){fail('sign-out did not go through — try again.');return;}
     // Clear local state: the pasted ops token ('t7'), the conversation pointer ('c7'),
     // and the compose draft for that conversation. If 't7' survived, the next visit
     // would silently re-authenticate as the ops role; dropping it is the honest exit.
     sdel('t7');sdel(dkey());sdel('c7');tok.value='';
     AUTHED=false;
     location.reload();
-  }catch(e){const say=$('say');if(say)say.textContent='sign-out did not go through — try again.';}
+  }catch(e){fail('sign-out did not go through — try again.');}
 }
 // --- signup: the arriver's first door ---------------------------------------------------------
 // Reveals the signup panel (osignup) or closes it (dsignup). A chip tap seeds the compose and
