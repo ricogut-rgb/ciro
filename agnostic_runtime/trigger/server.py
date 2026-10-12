@@ -22,7 +22,7 @@ from typing import Any
 
 from agnostic_runtime.trigger import plate as plate_mod
 from agnostic_runtime.trigger.runs import RunManager
-from agnostic_runtime.trigger.users import user_for_token
+from agnostic_runtime.trigger.users import seed_user, user_for_email, user_for_token
 
 # The request handler answers, or refuses — it never hangs a worker.
 #   MAX_BODY caps how many bytes we will even attempt to read, so an oversized (honest or
@@ -247,8 +247,10 @@ pre{white-space:pre-wrap;word-break:break-word;font-size:12px;color:var(--muted)
 .reception .r-offer{font:italic 400 19px/1.45 var(--serif);color:var(--deep);margin:2.4rem 0 0}
 .reception .r-prompt{font:400 15px/1.5 var(--sans);color:var(--muted);letter-spacing:.05em;margin:2.7rem 0 1.05rem}
 .r-chips{display:flex;flex-wrap:wrap;justify-content:center;gap:10px;max-width:25rem;margin:0 auto}
-.r-chip{width:auto;margin:0;font:400 15px/1 var(--serif);color:var(--muted);background:var(--panel);border:1px solid var(--rule);border-radius:999px;padding:10px 17px;cursor:default;opacity:.75}
-.r-chip[disabled]{pointer-events:none}
+.r-chip{width:auto;margin:0;font:400 15px/1 var(--serif);color:var(--muted);background:var(--panel);border:1px solid var(--rule);border-radius:999px;padding:10px 17px;cursor:pointer;transition:color .15s,border-color .15s,background .15s}
+.r-chip:hover{color:var(--ink);border-color:var(--muted);background:var(--field)}
+.r-chip:focus-visible{outline:2px solid var(--seat);outline-offset:2px}
+.r-chip[disabled]{pointer-events:none;opacity:.5}
 .reception .r-why{font:400 13.5px/1.6 var(--sans);letter-spacing:.03em;max-width:25rem;margin:2.9rem auto 0}
 .r-why a{color:var(--muted);text-decoration:underline;text-underline-offset:3px;text-decoration-thickness:1px;text-decoration-color:var(--faint)}
 .r-why a:hover{color:var(--accent);text-decoration-color:var(--accent)}
@@ -402,6 +404,15 @@ body.paused #plate .pbactions button,body.paused #compose button.send{opacity:.5
 <div id="dock">
   <div class="brand"><span class="sig">7</span><button class="gear" onclick="cfg()" title="settings">&#9881;</button></div>
   <p class="sub">Not sure where to start? Click in the box and hit enter &mdash; signup opens when you&rsquo;re ready.</p>
+  <div id="signup" class="cfg" style="display:none">
+    <p class="cfg-welcome">Email you, so you can come back to this.</p>
+    <label for="su-email">email</label><input id="su-email" type="email" placeholder="you@wherever" autocomplete="email" inputmode="email">
+    <label for="su-role">i&rsquo;m a&hellip; <span style="text-transform:none;letter-spacing:0;color:var(--faint)">(optional)</span></label><input id="su-role" type="text" placeholder="builder, writer, carrier of a decision" autocomplete="off">
+    <button id="su-go" type="button" onclick="signup()">Sign up</button>
+    <p class="muted" style="font-size:12px;line-height:1.55;margin-top:.7rem">Your email stays with CIRO &mdash; not sold, not tracked. Export is being wired.</p>
+    <p id="su-err" class="err" style="font-size:13px;margin:.4rem 0 0;display:none"></p>
+    <button class="sec" type="button" onclick="dsignup()">not now</button>
+  </div>
   <div id="cfg" class="cfg" style="display:none">
     <p class="cfg-welcome">The invite you were sent carries what you need. If you arrived here first — hi. The space waits.</p>
     <label>token</label><input id="tok" type="password" placeholder="paste once">
@@ -436,11 +447,11 @@ body.paused #plate .pbactions button,body.paused #compose button.send{opacity:.5
     <p class="r-offer">Let&rsquo;s lighten your load.</p>
     <p class="r-prompt">What do you need more of right now?</p>
     <div class="r-chips">
-      <button type="button" class="r-chip" disabled aria-disabled="true">Time</button>
-      <button type="button" class="r-chip" disabled aria-disabled="true">Clarity</button>
-      <button type="button" class="r-chip" disabled aria-disabled="true">A decision</button>
-      <button type="button" class="r-chip" disabled aria-disabled="true">Momentum</button>
-      <button type="button" class="r-chip" disabled aria-disabled="true">Courage</button>
+      <button type="button" class="r-chip" onclick="chip('Time')">Time</button>
+      <button type="button" class="r-chip" onclick="chip('Clarity')">Clarity</button>
+      <button type="button" class="r-chip" onclick="chip('A decision')">A decision</button>
+      <button type="button" class="r-chip" onclick="chip('Momentum')">Momentum</button>
+      <button type="button" class="r-chip" onclick="chip('Courage')">Courage</button>
     </div>
     <p class="r-why"><a href="/why">Why building generative technology in 2026 should cost nothing</a></p>
   </div></div>
@@ -455,11 +466,57 @@ function sdel(k){try{localStorage.removeItem(k)}catch(e){}}
 const tok=$('tok'), model=$('model'), task=$('task'), convo=$('convo'), jump=$('jump'), send=$('send');
 tok.value=sget('t7')||''; model.value=sget('m7')||'cathedral';
 let CID=sget('c7')||null;
+// AUTHED is the "cookie-token works" flag. It is set true after a successful /signup, and
+// after loadPlate() returns 200 on a cold boot (returning visitor whose HttpOnly cookie
+// authorized them). JS can't read the HttpOnly cookie itself, so the flag is how the UI
+// knows a bearer-less fetch will reach the authed surface. Default false: the first-visit
+// arriver sees signup and the reception, not the invite-paste path.
+let AUTHED=false;
 tok.addEventListener('change',()=>sset('t7',tok.value));
 model.addEventListener('change',()=>sset('m7',model.value));
 // First encounter: do NOT auto-open the token wall. The hero (reception) carries the room; cfg
 // opens on Send-without-token (see go()) or on the gear. Reception first, gate second.
 function cfg(){const c=$('cfg');c.style.display=c.style.display==='none'?'block':'none'}
+// --- signup: the arriver's first door ---------------------------------------------------------
+// Reveals the signup panel (osignup) or closes it (dsignup). A chip tap seeds the compose and
+// reveals signup only when the arriver is NOT already authed; a repeat visit shouldn't ambush a
+// returning person with a signup card they already crossed. signup() POSTs the email; on 200 the
+// HttpOnly cookie is set by the server and we reload — the server authorizes via cookie, and the
+// AUTHED probe below sets the UI accordingly on the next boot. Nothing is pasted; nothing is kept
+// in JS. On 400 we show the per-field error inline; on 503 (incident pause) we say so.
+function osignup(){$('signup').style.display='block';const e=$('su-email');if(e)setTimeout(()=>e.focus(),50)}
+function dsignup(){$('signup').style.display='none';const er=$('su-err');if(er){er.style.display='none';er.textContent=''}}
+function sherr(msg){const er=$('su-err');if(!er)return;er.textContent=msg;er.style.display='block'}
+async function signup(){
+  const em=($('su-email').value||'').trim();
+  const dr=($('su-role').value||'').trim();
+  if(!em||em.indexOf('@')<1||em.indexOf('@')===em.length-1){sherr('that email looks off');return}
+  const btn=$('su-go');if(btn){btn.disabled=true;btn.textContent='signing up…'}
+  try{
+    const r=await fetch('/signup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:em,declared_role:dr})});
+    if(r.status===503){sherr('CIRO is paused for maintenance — try again shortly.');return}
+    if(r.status===400){sherr('that email looks off');return}
+    if(r.status===409){sherr('That email is already signed up. Sign-in by link is being wired — for now, reach Rico.');return}
+    if(!r.ok){sherr('signup did not go through — try again.');return}
+    AUTHED=true;
+    // The HttpOnly cookie is set; reload so the authed surface renders from a clean boot
+    // (loadPlate, draft restore, convo state) rather than patching a half-authed in-page view.
+    location.reload();
+  }catch(e){sherr('signup did not go through — try again.')}
+  finally{if(btn){btn.disabled=false;btn.textContent='Sign up'}}
+}
+// A chip tap seeds the compose with "<name> — " and either opens signup (anon) or focuses the
+// textarea (authed). The user still writes the ask and presses enter — the chip never composes
+// a reply on their behalf (II arc-altitude: human composes the sequence).
+function chip(name){
+  task.value=(name||'')+' — ';
+  // Programmatic .value doesn't fire 'input' — persist the draft by hand so the seed survives
+  // the signup → reload round-trip (otherwise the arriver signs up and the chip's seed is gone).
+  sset(dkey(),task.value);
+  grow();sync();task.focus();
+  try{task.setSelectionRange(task.value.length,task.value.length)}catch(e){}
+  if(!tok.value&&!AUTHED)osignup();
+}
 function H(){return {'Authorization':'Bearer '+tok.value,'Content-Type':'application/json'}}
 function esc(s){return (s||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
 function isSvg(s){return /^\s*<svg[\s>]/i.test(s||'')}
@@ -674,17 +731,27 @@ async function load(){
 load();
 function fresh(){CID=null;sdel('c7');convo.innerHTML='';jump.hidden=true;renderCanvas([]);restoreDraft();task.focus()}
 async function go(){
-  if(!tok.value){$('cfg').style.display='block';return}
+  // No bearer AND no cookie-auth signal yet → open the signup door (not the invite-paste
+  // panel). A returning arriver whose HttpOnly cookie carries them has AUTHED=true from the
+  // boot probe below; they skip this door. The pasteable cfg panel is still reachable via gear.
+  if(!tok.value&&!AUTHED){osignup();return}
   const msg=task.value; if(blank(msg))return;
   const key=dkey();
-  task.value=''; grow(); sync(); task.focus(); sset('t7',tok.value);
+  task.value=''; grow(); sync(); task.focus(); if(tok.value)sset('t7',tok.value);
   if(openOffer){recede(openOffer);openOffer=null;}
   // Sending is the one moment the view always goes to the newest (the reader just spoke).
   const mine=addConvo(bubble('you',msg,'you'),true);
   const live=addConvo('<div class="bubble muted think">7 is thinking…</div>',true);
   try{
     const r=await fetch('/run',{method:'POST',headers:H(),body:JSON.stringify({task:msg,model:model.value,conversation_id:CID})});
-    if(r.status===401){$('cfg').style.display='block';setLive(live,'<div class="bubble err">that token did not work — check settings.</div>');unsend(msg);return}
+    if(r.status===401){
+      // Auth lapsed mid-session. If an invite-paste token was in use, re-open cfg so the ops
+      // path can re-paste; otherwise the cookie expired/cleared, so send the arriver to signup.
+      AUTHED=false;
+      if(tok.value){$('cfg').style.display='block';setLive(live,'<div class="bubble err">that token did not work — check settings.</div>');}
+      else{osignup();setLive(live,'<div class="bubble err">that session expired — sign up again.</div>');}
+      unsend(msg);return;
+    }
     const j=await r.json();
     if(r.ok) sdel(key);
     if(j.conversation_id){CID=j.conversation_id;sset('c7',CID)}
@@ -1136,10 +1203,15 @@ function renderPlate(){
 }
 $('p-zoom').addEventListener('click',()=>{ZOOM=!ZOOM;renderPlate();$('plate').scrollTop=0;$('p-zoom').focus({preventScroll:true})});
 async function loadPlate(){
-  if(!tok.value){PLATE=null;renderPlate();syncUndos();return}
+  // Always attempt — the HttpOnly cookie may authorize us even when no bearer is pasted.
+  // The response status also doubles as the auth probe that sets AUTHED: 200 → cookie (or
+  // bearer) works; 401/503 → unauthed. First-visit arrivers 401 here harmlessly and go on
+  // to see the reception + chips as designed.
   try{
     const r=await fetch('/plate',{headers:H()});
+    if(r.status===401||r.status===503){AUTHED=false;PLATE=null;renderPlate();syncUndos();return}
     if(!r.ok){PLATE=null;renderPlate();syncUndos();return}
+    AUTHED=true;
     PLATE=await r.json(); renderPlate(); syncUndos();
   }catch(e){}
 }
@@ -1405,6 +1477,23 @@ def _make_handler(manager: RunManager, token: str | None,
             # configured (users.py is the auth source); the bearer just didn't match → 401.
             if token and auth == f"Bearer {token}":
                 return True
+            # Path 3: cookie token (post-signup browser session). HttpOnly cookie set by
+            # /signup; JS cannot read it, but the browser sends it on every same-origin fetch.
+            # This is what lets a signed-up arriver reach the authed surface WITHOUT pasting a
+            # token into any field. Parsed defensively — a malformed Cookie header never raises.
+            cookie_header = self.headers.get("Cookie", "") or ""
+            cookie_token = ""
+            for part in cookie_header.split(";"):
+                kv = part.strip().split("=", 1)
+                if len(kv) == 2 and kv[0] == "token":
+                    cookie_token = kv[1]
+                    break
+            if cookie_token:
+                rec = user_for_token(cookie_token)
+                if rec is not None:
+                    self._user_id = rec.get("id")
+                    self._role = rec.get("declared_role")
+                    return True
             # No valid auth. 503 only when NEITHER source is set up (no env AND no users on
             # disk) — a cold server that cannot authorize anyone yet.
             try:
@@ -1500,10 +1589,68 @@ def _make_handler(manager: RunManager, token: str | None,
         # --- routing -----------------------------------------------------
 
         def do_POST(self) -> None:  # noqa: N802
-            if not self._authorized():
-                return
+            # /signup is a PUBLIC passthrough (no Bearer required): the arriver's first
+            # door. It validates email, seeds a user record via users.seed_user, and sets
+            # an HttpOnly cookie carrying the new token. The browser then sends that cookie
+            # on every subsequent same-origin fetch; the arriver never pastes a token. The
+            # pause gate below still refuses signup during an incident — admitting new
+            # users while something is wrong is exactly what the pause is there to prevent.
             path = self.path.rstrip("/") or "/"
             parts = [p for p in path.split("/") if p]
+            if parts == ["signup"]:
+                if _beta_paused():
+                    self._send(503, {"error": "beta_paused",
+                                     "message": "CIRO is paused for maintenance. "
+                                                "Please check back shortly."})
+                    return
+                data, ok = self._read_json()
+                if not ok:
+                    return
+                email = (data.get("email") or "").strip()
+                # Basic shape only: non-empty, has '@' with text on both sides, ≤254 chars
+                # (RFC 5321 practical cap). Deep validation (MX, confirm-email flow) is
+                # intentionally out-of-scope for S1 — this is the honest floor.
+                if (not email or "@" not in email
+                        or email.startswith("@") or email.endswith("@")
+                        or len(email) > 254 or " " in email):
+                    self._send(400, {"error": "bad_email"})
+                    return
+                declared_role = (data.get("declared_role") or "").strip() or "stranger"
+                # NOT idempotent on email: refuse re-signup with an existing email. An
+                # earlier draft returned the existing user's token on the cookie — which
+                # would let anyone impersonate anyone just by knowing their email. The
+                # honest minimum is to refuse and point at the (NAMED-not-built) sign-in
+                # path: a magic-link flow carrying proof-of-email, which S1 does NOT ship.
+                # Until that lands, a lost cookie dead-ends the person back to Rico. The
+                # CLI (`users.py seed`) remains the operator-side door for recovery.
+                if user_for_email(email) is not None:
+                    self._send(409, {"error": "email_in_use",
+                                     "message": "That email is already signed up. "
+                                                "Sign-in by link is being wired."})
+                    return
+                try:
+                    rec = seed_user(email, declared_role)
+                except ValueError:
+                    self._send(400, {"error": "bad_email"})
+                    return
+                body = json.dumps({"ok": True, "redirect": "/"}).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                # HttpOnly: JS cannot read the cookie (XSS can't steal the token from JS).
+                # SameSite=Lax: cross-site requests cannot carry the cookie (CSRF floor).
+                # Path=/: available on every route the server serves.
+                # Max-Age one year: the cookie survives a page close; a device reset or
+                # explicit sign-out (future-shape) is the way back to anonymous.
+                self.send_header(
+                    "Set-Cookie",
+                    f"token={rec['token']}; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000",
+                )
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            if not self._authorized():
+                return
 
             # BETA_PAUSED: refuse mutations while the sentinel is present. GETs still work
             # so the console can render the maintenance banner from /plate's reply.
