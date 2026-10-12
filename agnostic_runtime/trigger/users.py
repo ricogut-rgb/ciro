@@ -7,10 +7,20 @@ AT THAT POINT — minimum-ship uses it only because the Record doesn't yet exist
 something starts reading users.json as authority after the Record lands, that breaks
 the projection/substrate invariant.
 
-The honest floor: a user is `{id, email, declared_role, token, created_at}` and
-nothing more. Records are APPENDED to a JSON array on disk; nothing mutates in
-place. A role change is another APPEND whose id matches an earlier record;
+The honest floor: a user is
+`{id, email, declared_role, token, created_at, chip, priority}` and nothing
+more. Records are APPENDED to a JSON array on disk; nothing mutates in place.
+A role change is another APPEND whose id matches an earlier record;
 latest-row-per-id wins on read (see `_latest_by_id`).
+
+EMAIL IS NULLABLE in the honest-wait phase (MVP2). The surface moved from
+invite-only to hybrid-open: anyone can arrive, so a record may carry no email
+at all (None). Email stays as the operator-reach channel when it is given, and
+collapses to None when it is not. `chip` remembers which reception chip the
+arriver clicked (nullable string). `priority` is True when a valid invite code
+accompanied signup — a flag, no longer a gate. Legacy rows on disk predate
+these fields and will not carry them; readers tolerate the absence via `.get()`
+and callers see `None` / `False` as the natural defaults.
 
 FIELD NAME — `declared_role`, not `role`. Role on a persistent user record culturally
 promises posture-loading, and the primary operator's standing is explicit: "recorded,
@@ -136,26 +146,44 @@ def display_role(declared_role: Optional[str]) -> str:
     return value
 
 
-def seed_user(email: str, declared_role: str = "stranger",
-              token: Optional[str] = None) -> dict:
+def seed_user(email: Optional[str], declared_role: str = "stranger",
+              token: Optional[str] = None,
+              chip: Optional[str] = None,
+              priority: bool = False) -> dict:
     """Append one user-birth event. Returns the full record so the caller can
     print the token (it is only emitted in full here — at birth).
 
-    Idempotent on EMAIL is NOT guaranteed and intentionally so: a second seed of
-    the same email creates a second user (new id, new token). Use `user_for_email`
-    for upsert semantics.
+    EMAIL is nullable in the honest-wait phase. None or empty-after-strip
+    collapses to None on the record — "no email given" is a first-class state,
+    not an error. The operator-path CLI (`_cli_seed`) still requires an email
+    at its own altitude; this writer accepts the absence.
+
+    CHIP (optional string) remembers which reception chip an arriver clicked
+    at signup. PRIORITY (bool, default False) is True when a valid invite code
+    accompanied the signup — a flag now, not a gate.
+
+    Idempotent on EMAIL is NOT guaranteed and intentionally so: a second seed
+    of the same email creates a second user (new id, new token). Use
+    `user_for_email` for upsert semantics.
     """
-    email = (email or "").strip()
-    if not email:
-        raise ValueError("email is required")
+    cleaned = (email or "").strip() if email is not None else ""
+    email_value: Optional[str] = cleaned if cleaned else None
+    chip_value: Optional[str]
+    if chip is None:
+        chip_value = None
+    else:
+        chip_stripped = chip.strip()
+        chip_value = chip_stripped if chip_stripped else None
     uid = secrets.token_hex(8)
     tok = token or secrets.token_urlsafe(32)
     rec = {
         "id": uid,
-        "email": email,
+        "email": email_value,
         "declared_role": _normalize_declared_role(declared_role),
         "token": tok,
         "created_at": _now(),
+        "chip": chip_value,
+        "priority": bool(priority),
     }
     records = _load_raw()
     records.append(rec)
@@ -170,9 +198,10 @@ def update_declared_role(user_id: str, new_declared_role: str) -> Optional[dict]
     making the append-only semantics first-class so a future reader does not have
     to infer them. Returns the new row, or None if no user with that id exists.
 
-    The new row carries the CURRENT token and email (read from the latest fold
-    at write-time) so a single row still describes the whole user state. Only
-    `declared_role` and `created_at` change.
+    The new row carries the CURRENT token, email, chip, and priority (read
+    from the latest fold at write-time) so a single row still describes the
+    whole user state. Only `declared_role` and `created_at` change. Legacy
+    rows without `chip`/`priority` fold through as None / False by default.
     """
     folded = _latest_by_id(_load_raw())
     prior = folded.get(user_id)
@@ -180,10 +209,12 @@ def update_declared_role(user_id: str, new_declared_role: str) -> Optional[dict]
         return None
     new_row = {
         "id": user_id,
-        "email": prior.get("email", ""),
+        "email": prior.get("email"),
         "declared_role": _normalize_declared_role(new_declared_role),
         "token": prior.get("token", ""),
         "created_at": _now(),
+        "chip": prior.get("chip"),
+        "priority": bool(prior.get("priority", False)),
     }
     records = _load_raw()
     records.append(new_row)
@@ -247,11 +278,22 @@ def user_for_email(email: str) -> Optional[dict]:
 # -------- CLI --------
 
 def _cli_seed(argv: list[str]) -> int:
+    """Operator seed path — email is REQUIRED here even though the writer now
+    accepts None. The CLI is the operator channel; a seeded user without an
+    operator-reach is a misuse of this path. Public signup goes through the
+    server, not this CLI. chip/priority are not surfaced here — operator-seeded
+    users land chip=None, priority=False.
+    """
     if not argv:
         print("usage: python -m agnostic_runtime.trigger.users seed EMAIL [ROLE]",
               file=sys.stderr)
         return 2
-    email = argv[0]
+    email = (argv[0] or "").strip()
+    if not email:
+        print("usage: python -m agnostic_runtime.trigger.users seed EMAIL [ROLE]",
+              file=sys.stderr)
+        print("error: email is required at the operator CLI", file=sys.stderr)
+        return 2
     declared_role = argv[1] if len(argv) > 1 else "stranger"
     existing = user_for_email(email)
     if existing is not None:
