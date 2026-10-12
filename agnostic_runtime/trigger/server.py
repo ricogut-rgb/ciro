@@ -797,7 +797,7 @@ async function load(){
       else{const w=seven(tn.text);if(!blank(w)){
         // A turn carries answered_by only when the standing attendant authored it; rehydrate it as
         // the attendant, never the present seat — the who-identity must survive a reload.
-        addConvo(tn.answered_by?attendantBubble(w,tn.answer_outcome):bubble('7',w));
+        addConvo(tn.answered_by?attendantBubble(w,tn.answer_outcome):bubble('CIRO',w));
       }}
     });
     renderCanvas(t.canvas||[]);
@@ -829,7 +829,7 @@ async function go(){
   if(openOffer){recede(openOffer);openOffer=null;}
   // Sending is the one moment the view always goes to the newest (the reader just spoke).
   const mine=addConvo(bubble('you',msg,'you'),true);
-  const live=addConvo('<div class="bubble muted think">7 is thinking…</div>',true);
+  const live=addConvo('<div class="bubble muted think">CIRO is thinking…</div>',true);
   try{
     const r=await fetch('/run',{method:'POST',headers:H(),body:JSON.stringify({task:msg,model:model.value,conversation_id:CID})});
     if(r.status===401){
@@ -861,7 +861,7 @@ async function poll(rid, live){
     // WHO answered decides the sender: a standing-attendant answer (s.answered_by set, from the
     // audit log) must not render as the present seat "7". This is the whole presence-reservation
     // point — once "home" can be a machine, the surface still tells the truth about who is there.
-    setLive(live,s.answered_by?attendantBubble(body,s.answer_outcome):bubble('7',body));
+    setLive(live,s.answered_by?attendantBubble(body,s.answer_outcome):bubble('CIRO',body));
   }else if(s.state==='awaiting_cathedral'){
     const d=s.door||{};
     const cond=doorCondition(d);
@@ -891,30 +891,30 @@ async function poll(rid, live){
     }
     const condHtml=isOp?doorConditionHtml(d):'';
     // The 2s re-render: soft, so it never moves the reader or drops a selection they are making in it.
-    setLive(live,'<div class="'+cls+'"><div class="who">7</div>'+esc(msg)+health+condHtml+'</div>',true);
+    setLive(live,'<div class="'+cls+'"><div class="who">CIRO</div>'+esc(msg)+health+condHtml+'</div>',true);
     if(!d.stranded) setTimeout(()=>poll(rid,live),2000);
   }else if(s.state==='awaiting_confirm'){
     const mid=s.pending.move_id;
     const body=offerBody(s.pending);
     if(!body){
       fetch('/run/'+rid+'/decline',{method:'POST',headers:H(),body:'{}'}).catch(()=>{});
-      setLive(live,bubble('7',humanize('no_parseable_intent'))); return;
+      setLive(live,bubble('CIRO',humanize('no_parseable_intent'))); return;
     }
-    const pre=blank(seven(s.say))?'':bubble('7',seven(s.say));
+    const pre=blank(seven(s.say))?'':bubble('CIRO',seven(s.say));
     setLive(live,pre+
-      '<div class="bubble pending"><div class="who">7 wants to do this — nothing happens until you allow it</div>'+body+
+      '<div class="bubble pending"><div class="who">CIRO wants to do this — nothing happens until you allow it</div>'+body+
       '<div class="row"><button class="ap">Allow</button><button class="de sec">Not now</button></div></div>');
     live.querySelector('.ap').onclick=()=>act(rid,mid,'confirm',live);
     live.querySelector('.de').onclick=()=>act(rid,mid,'decline',live);
     openOffer={rid:rid,mid:mid,el:live};
   }else if(s.state==='done'){
     const t=s.result&&s.result.params&&s.result.params.text;
-    if(s.result&&s.result.fired==='write_note'&&!blank(seven(t))) setLive(live,bubble('7',seven(t)));
-    else setLive(live,'<div class="bubble"><div class="who">7</div>done.'+det(s.result)+'</div>');
+    if(s.result&&s.result.fired==='write_note'&&!blank(seven(t))) setLive(live,bubble('CIRO',seven(t)));
+    else setLive(live,'<div class="bubble"><div class="who">CIRO</div>done.'+det(s.result)+'</div>');
   }else if(s.state==='declined'){
     setLive(live,'<div class="bubble muted">left it undone.</div>');
   }else{
-    setLive(live,'<div class="bubble"><div class="who">7</div>'+esc(humanize(s.error))+det(s)+'</div>');
+    setLive(live,'<div class="bubble"><div class="who">CIRO</div>'+esc(humanize(s.error))+det(s)+'</div>');
   }
 }
 async function act(rid,mid,kind,live){
@@ -1187,7 +1187,7 @@ async function doApprove(it,pb,approve,reject,st){
   const safeTitle=strip(it.title||''), safeShape=strip(pb.shape_id||'');
   const text='Plate · '+safeTitle+' → approve ('+safeShape+')';
   addConvo(bubble('you',text,'you'),true);
-  const live=addConvo('<div class="bubble muted think">7 is thinking…</div>',true);
+  const live=addConvo('<div class="bubble muted think">CIRO is thinking…</div>',true);
   if(j.run_id) poll(j.run_id,live);
   $('p-last').textContent=j.delivered
     ? 'Approved and sent to CIRO: '+safeTitle
@@ -1230,7 +1230,7 @@ async function doReject(it,pb,approve,reject,st){
   const safeTitle=strip(it.title||''), safeShape=strip(pb.shape_id||'');
   const text='Plate · '+safeTitle+' → reject ('+safeShape+')';
   addConvo(bubble('you',text,'you'),true);
-  const live=addConvo('<div class="bubble muted think">7 is thinking…</div>',true);
+  const live=addConvo('<div class="bubble muted think">CIRO is thinking…</div>',true);
   if(j.run_id) poll(j.run_id,live);
   $('p-last').textContent='Rejected: '+safeTitle+'.';
   $('p-last').style.color='';
@@ -1417,7 +1417,7 @@ async function doUndo(id,actTs,b,slot){
   // Recorded. The undo goes to CIRO in the dock like any message (no Undo on an undo).
   if(j.conversation_id){CID=j.conversation_id;sset('c7',CID)}
   addConvo(bubble('you',j.text||'Plate · undo','you'),true);
-  const live=addConvo('<div class="bubble muted think">7 is thinking…</div>',true);
+  const live=addConvo('<div class="bubble muted think">CIRO is thinking…</div>',true);
   if(j.run_id) poll(j.run_id,live);
   const it=plateItem(id), title=it?it.title:'', was=j.undid?j.undid.choice:'';
   const rep=j.undid&&j.undid.replaced, tag=it&&it.num?numLabel(it.num)+' ':'';
@@ -1453,7 +1453,7 @@ async function tapChoice(it,choice,row,st){
   if(j.conversation_id){CID=j.conversation_id;sset('c7',CID)}
   markPlate(addConvo(bubble('you',j.text||('Plate · '+it.title+' → '+choice),'you'),true),
             j.act?{op:'act',id:j.act.id,act_ts:j.act.ts}:null);
-  const live=addConvo('<div class="bubble muted think">7 is thinking…</div>',true);
+  const live=addConvo('<div class="bubble muted think">CIRO is thinking…</div>',true);
   if(j.run_id) poll(j.run_id,live);
   $('p-last').textContent=j.delivered
     ? 'Sent to CIRO: '+it.title+' → '+choice
