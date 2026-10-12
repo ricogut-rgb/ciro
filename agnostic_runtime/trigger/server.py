@@ -21,6 +21,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
 from agnostic_runtime.trigger import plate as plate_mod
+from agnostic_runtime.trigger.invites import consume_code as consume_invite_code
 from agnostic_runtime.trigger.runs import RunManager
 from agnostic_runtime.trigger.users import seed_user, user_for_email, user_for_token
 
@@ -404,14 +405,24 @@ body.paused #plate .pbactions button,body.paused #compose button.send{opacity:.5
 <div id="dock">
   <div class="brand"><span class="sig">7</span><button class="gear" onclick="cfg()" title="settings">&#9881;</button></div>
   <p class="sub">Not sure where to start? Click in the box and hit enter &mdash; signup opens when you&rsquo;re ready.</p>
-  <div id="signup" class="cfg" style="display:none">
-    <p class="cfg-welcome">Email you, so you can come back to this.</p>
+  <div id="signup" class="cfg" style="display:none" role="dialog" aria-modal="true" aria-labelledby="su-heading">
+    <p class="cfg-welcome" id="su-heading">The space opens by invite. If you were sent one, bring it in.</p>
+    <label for="su-invite">invite</label><input id="su-invite" type="text" placeholder="paste the code you were sent" autocomplete="off" autocapitalize="off" spellcheck="false">
     <label for="su-email">email</label><input id="su-email" type="email" placeholder="you@wherever" autocomplete="email" inputmode="email">
     <label for="su-role">i&rsquo;m a&hellip; <span style="text-transform:none;letter-spacing:0;color:var(--faint)">(optional)</span></label><input id="su-role" type="text" placeholder="builder, writer, carrier of a decision" autocomplete="off">
     <button id="su-go" type="button" onclick="signup()">Sign up</button>
-    <p class="muted" style="font-size:12px;line-height:1.55;margin-top:.7rem">Your email stays with CIRO &mdash; not sold, not tracked. Export is being wired.</p>
-    <p id="su-err" class="err" style="font-size:13px;margin:.4rem 0 0;display:none"></p>
+    <p class="muted" style="font-size:12px;line-height:1.55;margin-top:.7rem">Your email stays with CIRO &mdash; not sold, not tracked. Export will be yours.</p>
+    <p id="su-err" class="err" role="alert" style="font-size:13px;margin:.4rem 0 0;display:none"></p>
     <button class="sec" type="button" onclick="dsignup()">not now</button>
+    <noscript>
+      <p class="muted" style="font-size:12px;margin:.7rem 0 .4rem">Your browser has JavaScript off. You can still sign up:</p>
+      <form action="/signup" method="post" enctype="application/x-www-form-urlencoded">
+        <label for="ns-invite">invite</label><input id="ns-invite" name="invite_code" type="text" required>
+        <label for="ns-email">email</label><input id="ns-email" name="email" type="email" required>
+        <label for="ns-role">i&rsquo;m a&hellip; (optional)</label><input id="ns-role" name="declared_role" type="text">
+        <button type="submit">Sign up</button>
+      </form>
+    </noscript>
   </div>
   <div id="cfg" class="cfg" style="display:none">
     <p class="cfg-welcome">The invite you were sent carries what you need. If you arrived here first — hi. The space waits.</p>
@@ -484,19 +495,29 @@ function cfg(){const c=$('cfg');c.style.display=c.style.display==='none'?'block'
 // HttpOnly cookie is set by the server and we reload — the server authorizes via cookie, and the
 // AUTHED probe below sets the UI accordingly on the next boot. Nothing is pasted; nothing is kept
 // in JS. On 400 we show the per-field error inline; on 503 (incident pause) we say so.
-function osignup(){$('signup').style.display='block';const e=$('su-email');if(e)setTimeout(()=>e.focus(),50)}
+function osignup(){
+  $('signup').style.display='block';
+  // Prefer the invite field — it's the first thing the arriver fills, and screen-readers
+  // announce the dialog heading via aria-labelledby when focus lands inside it.
+  const first=$('su-invite')||$('su-email');
+  if(first)setTimeout(()=>first.focus(),50);
+  const say=$('say');if(say)say.textContent='signup opened — invite required';
+}
 function dsignup(){$('signup').style.display='none';const er=$('su-err');if(er){er.style.display='none';er.textContent=''}}
 function sherr(msg){const er=$('su-err');if(!er)return;er.textContent=msg;er.style.display='block'}
 async function signup(){
+  const inv=($('su-invite').value||'').trim();
   const em=($('su-email').value||'').trim();
   const dr=($('su-role').value||'').trim();
-  if(!em||em.indexOf('@')<1||em.indexOf('@')===em.length-1){sherr('that email looks off');return}
+  if(!inv){sherr('an invite code is needed to sign up');$('su-invite').focus();return}
+  if(!em||em.indexOf('@')<1||em.indexOf('@')===em.length-1){sherr('that email looks off');$('su-email').focus();return}
   const btn=$('su-go');if(btn){btn.disabled=true;btn.textContent='signing up…'}
   try{
-    const r=await fetch('/signup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:em,declared_role:dr})});
+    const r=await fetch('/signup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:em,declared_role:dr,invite_code:inv})});
     if(r.status===503){sherr('CIRO is paused for maintenance — try again shortly.');return}
     if(r.status===400){sherr('that email looks off');return}
-    if(r.status===409){sherr('That email is already signed up. Sign-in by link is being wired — for now, reach Rico.');return}
+    if(r.status===403){sherr('this space opens by invite — that code did not match a live one.');$('su-invite').focus();return}
+    if(r.status===409){sherr('that email is already signed up. sign-in by link is being wired — for now, reach Rico.');return}
     if(!r.ok){sherr('signup did not go through — try again.');return}
     AUTHED=true;
     // The HttpOnly cookie is set; reload so the authed surface renders from a clean boot
@@ -734,7 +755,19 @@ async function go(){
   // No bearer AND no cookie-auth signal yet → open the signup door (not the invite-paste
   // panel). A returning arriver whose HttpOnly cookie carries them has AUTHED=true from the
   // boot probe below; they skip this door. The pasteable cfg panel is still reachable via gear.
-  if(!tok.value&&!AUTHED){osignup();return}
+  //
+  // But cold-boot loadPlate() can net-fail (offline, DNS blip, proxy hiccup) and leave AUTHED
+  // false even for a returning authed user. Re-probe once before ambushing them with signup —
+  // a merciful floor. On real network failure we say so instead of silently routing to signup.
+  if(!tok.value&&!AUTHED){
+    let probe;
+    try{probe=await fetch('/plate',{headers:H()})}catch(e){
+      addConvo('<div class="bubble err">connection lost — try again in a moment.</div>',true);
+      return;
+    }
+    if(probe && probe.ok){AUTHED=true;}
+    else{osignup();return;}
+  }
   const msg=task.value; if(blank(msg))return;
   const key=dkey();
   task.value=''; grow(); sync(); task.focus(); if(tok.value)sset('t7',tok.value);
@@ -1426,11 +1459,59 @@ def _make_handler(manager: RunManager, token: str | None,
         def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
             pass
 
+        def _is_https_request(self) -> bool:
+            """Does this request look like it reached us over TLS?
+
+            Two signals: a reverse proxy sets X-Forwarded-Proto: https, OR the raw
+            request itself was TLS (self.rfile ultimately wraps an SSLSocket). The
+            server itself speaks plain HTTP (bound to 127.0.0.1 by default), so in
+            practice the proxy header is the signal that matters in production.
+
+            A dev run on 127.0.0.1/localhost is NOT https — we want cookies to work
+            without Secure so the dev doesn't have to run a local TLS proxy.
+            Returning False keeps Secure off; the browser accepts the cookie over
+            http://localhost per secure-context rules.
+            """
+            fwd = (self.headers.get("X-Forwarded-Proto") or "").strip().lower()
+            if fwd == "https":
+                return True
+            # Belt-and-suspenders: X-Forwarded-Ssl: on is older but still seen.
+            if (self.headers.get("X-Forwarded-Ssl") or "").strip().lower() == "on":
+                return True
+            return False
+
+        def _token_cookie_header(self, token_value: str, max_age: int = 31536000) -> str:
+            """Build a Set-Cookie value for the auth token.
+
+            Secure is added when the request appears to be TLS; without that signal
+            the cookie is still HttpOnly + SameSite=Lax (the floor is the same, the
+            Secure flag just adds TLS-only transmission on top). Localhost dev stays
+            testable (secure-context exception); a prod request behind an https
+            proxy gets Secure.
+            """
+            secure = "; Secure" if self._is_https_request() else ""
+            return (
+                f"token={token_value}; Path=/; HttpOnly; SameSite=Lax; "
+                f"Max-Age={max_age}{secure}"
+            )
+
+        def _emit_renewal_cookie(self) -> None:
+            """If this request was authorized by cookie, re-emit the cookie with a
+            fresh Max-Age. Sliding-window: an active session keeps itself alive;
+            a session that goes idle for a year dead-ends to signup, as designed.
+
+            Must be called AFTER send_response and BEFORE end_headers.
+            """
+            tok = getattr(self, "_renew_cookie_token", None)
+            if tok:
+                self.send_header("Set-Cookie", self._token_cookie_header(tok))
+
         def _send(self, code: int, payload: dict[str, Any]) -> None:
             body = json.dumps(payload).encode("utf-8")
             self.send_response(code)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
+            self._emit_renewal_cookie()
             self.end_headers()
             self.wfile.write(body)
 
@@ -1442,8 +1523,32 @@ def _make_handler(manager: RunManager, token: str | None,
             # (A cached older console is the likely cause of divergent first-touch reports.)
             self.send_header("Cache-Control", "no-store")
             self.send_header("Content-Length", str(len(body)))
+            self._emit_renewal_cookie()
             self.end_headers()
             self.wfile.write(body)
+
+        def _resolve_user_token(self, token_str: str | None) -> tuple[str | None, str | None]:
+            """Shared resolver: a token string → (user_id, role) if it maps to a user, else
+            (None, None). Collapses the identical lookup that bearer-path and cookie-path
+            used to do inline — same auth story on both doors.
+            """
+            if not token_str or not isinstance(token_str, str):
+                return None, None
+            rec = user_for_token(token_str)
+            if rec is None:
+                return None, None
+            return rec.get("id"), rec.get("declared_role")
+
+        def _cookie_token(self) -> str:
+            """Extract the `token` cookie value from the Cookie header. Returns ''
+            on absent / malformed; never raises.
+            """
+            cookie_header = self.headers.get("Cookie", "") or ""
+            for part in cookie_header.split(";"):
+                kv = part.strip().split("=", 1)
+                if len(kv) == 2 and kv[0] == "token":
+                    return kv[1]
+            return ""
 
         def _authorized(self) -> bool:
             """Resolve the Bearer header and set ``self._user_id`` / ``self._role`` for the
@@ -1464,13 +1569,14 @@ def _make_handler(manager: RunManager, token: str | None,
             """
             self._user_id = None  # noqa: SLF001
             self._role = None     # noqa: SLF001
+            self._renew_cookie_token = None  # noqa: SLF001
             auth = self.headers.get("Authorization", "")
             bearer = auth[7:] if auth.startswith("Bearer ") else ""
-            # Path 1: user token.
-            rec = user_for_token(bearer) if bearer else None
-            if rec is not None:
-                self._user_id = rec.get("id")
-                self._role = rec.get("declared_role")
+            # Path 1: user token in the Authorization header.
+            uid, role = self._resolve_user_token(bearer)
+            if uid is not None:
+                self._user_id = uid
+                self._role = role
                 return True
             # Path 2: env admin token (back-compat). An env token means "admin / daemon" —
             # not a user. If the env token is unset AND the user path missed, the server IS
@@ -1481,18 +1587,15 @@ def _make_handler(manager: RunManager, token: str | None,
             # /signup; JS cannot read it, but the browser sends it on every same-origin fetch.
             # This is what lets a signed-up arriver reach the authed surface WITHOUT pasting a
             # token into any field. Parsed defensively — a malformed Cookie header never raises.
-            cookie_header = self.headers.get("Cookie", "") or ""
-            cookie_token = ""
-            for part in cookie_header.split(";"):
-                kv = part.strip().split("=", 1)
-                if len(kv) == 2 and kv[0] == "token":
-                    cookie_token = kv[1]
-                    break
+            cookie_token = self._cookie_token()
             if cookie_token:
-                rec = user_for_token(cookie_token)
-                if rec is not None:
-                    self._user_id = rec.get("id")
-                    self._role = rec.get("declared_role")
+                uid, role = self._resolve_user_token(cookie_token)
+                if uid is not None:
+                    self._user_id = uid
+                    self._role = role
+                    # Sliding-window: a cookie that just worked gets a fresh Max-Age on this
+                    # response, so active use keeps the session alive and only idleness lets it lapse.
+                    self._renew_cookie_token = cookie_token
                     return True
             # No valid auth. 503 only when NEITHER source is set up (no env AND no users on
             # disk) — a cold server that cannot authorize anyone yet.
@@ -1586,24 +1689,177 @@ def _make_handler(manager: RunManager, token: str | None,
                 return r, None
             return r, {"op": r["op"], "id": r["id"], "act_ts": r["act"]["ts"]}
 
+        def _read_signup_body(self) -> tuple[dict[str, Any] | None, bool]:
+            """Parse /signup's body. Accepts application/json (the JS path) OR
+            application/x-www-form-urlencoded (the <noscript> fallback form). On
+            parse error, replies 400 and returns (None, False).
+            """
+            raw_len = self.headers.get("Content-Length")
+            try:
+                length = int(raw_len) if raw_len is not None else 0
+            except (TypeError, ValueError):
+                self._send(400, {"error": "bad_request"})
+                return None, False
+            if length < 0 or length > MAX_BODY:
+                self._send(413 if length > MAX_BODY else 400,
+                           {"error": "payload_too_large" if length > MAX_BODY else "bad_request"})
+                return None, False
+            try:
+                raw = self.rfile.read(length) if length > 0 else b""
+            except (socket.timeout, TimeoutError, OSError):
+                try:
+                    self._send(408, {"error": "request_timeout"})
+                except OSError:
+                    pass
+                self.close_connection = True
+                return None, False
+            ctype = (self.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
+            if ctype == "application/x-www-form-urlencoded":
+                try:
+                    from urllib.parse import parse_qs
+                    parsed = parse_qs(raw.decode("utf-8"), keep_blank_values=True)
+                except (UnicodeDecodeError, ValueError):
+                    self._send(400, {"error": "bad_form"})
+                    return None, False
+                # parse_qs returns {k: [v, ...]}; collapse to the first value per key.
+                flat = {k: (v[0] if v else "") for k, v in parsed.items()}
+                return flat, True
+            # Default (and JS) path: JSON.
+            if not raw:
+                return {}, True
+            try:
+                data = json.loads(raw)
+            except (ValueError, UnicodeDecodeError):
+                self._send(400, {"error": "bad_json"})
+                return None, False
+            if not isinstance(data, dict):
+                self._send(400, {"error": "bad_json"})
+                return None, False
+            return data, True
+
+        def _invite_is_live(self, code: str) -> bool:
+            """Probe whether an invite code exists and is unused, WITHOUT consuming it.
+
+            Called before the email-collision check so that path only runs for arrivers
+            who already proved they belong here. We re-check at consume-time (which is
+            atomic), so a race between probe and consume cannot double-admit — the
+            consume returns False and the second arriver's cookie still works (their
+            user is created), but the code is gone.
+            """
+            from agnostic_runtime.trigger import invites as _invites
+            import hmac
+            if not code:
+                return False
+            for rec in _invites.list_codes():
+                if not isinstance(rec, dict):
+                    continue
+                if rec.get("used_at"):
+                    continue
+                stored = rec.get("code", "")
+                if isinstance(stored, str) and stored and hmac.compare_digest(stored, code):
+                    return True
+            return False
+
+        def _signup_reply(self, code: int, payload: dict[str, Any]) -> None:
+            """Error path on /signup. Honors Accept: when the <noscript> form
+            submitted (text/html expected), reply as a tiny HTML page the arriver
+            can read without JS. Otherwise JSON for the fetch() caller.
+            """
+            if self._wants_html():
+                self._send_signup_html(code, payload.get("message")
+                                       or payload.get("error", "signup did not go through"))
+                return
+            self._send(code, payload)
+
+        def _signup_success(self, rec: dict) -> None:
+            """Success path. Sets the auth cookie; replies JSON (JS reload) or an
+            HTML redirect page (noscript fallback)."""
+            cookie = self._token_cookie_header(rec["token"])
+            if self._wants_html():
+                body = (
+                    "<!doctype html><meta charset=utf-8>"
+                    "<meta http-equiv=refresh content=\"0;url=/\">"
+                    "<title>CIRO — signed up</title>"
+                    "<p style=\"font-family:system-ui,sans-serif;padding:2rem\">"
+                    "signed up. <a href=\"/\">Open CIRO</a>.</p>"
+                ).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Set-Cookie", cookie)
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            body = json.dumps({"ok": True, "redirect": "/"}).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Set-Cookie", cookie)
+            self.end_headers()
+            self.wfile.write(body)
+
+        def _wants_html(self) -> bool:
+            """Did this /signup request come from the noscript form? The form sets
+            Accept: text/html by default; the fetch() path sends Accept: */* and
+            Content-Type: application/json.
+            """
+            ctype = (self.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
+            if ctype == "application/x-www-form-urlencoded":
+                return True
+            accept = (self.headers.get("Accept") or "").lower()
+            if "application/json" in accept:
+                return False
+            return "text/html" in accept
+
+        def _send_signup_html(self, code: int, message: str) -> None:
+            body = (
+                "<!doctype html><meta charset=utf-8>"
+                "<title>CIRO — signup</title>"
+                "<main style=\"font-family:system-ui,sans-serif;max-width:30rem;margin:3rem auto;padding:0 1rem;line-height:1.5\">"
+                f"<p>{message}</p>"
+                "<p><a href=\"/\">back to CIRO</a></p></main>"
+            ).encode("utf-8")
+            self.send_response(code)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
         # --- routing -----------------------------------------------------
 
         def do_POST(self) -> None:  # noqa: N802
             # /signup is a PUBLIC passthrough (no Bearer required): the arriver's first
-            # door. It validates email, seeds a user record via users.seed_user, and sets
-            # an HttpOnly cookie carrying the new token. The browser then sends that cookie
-            # on every subsequent same-origin fetch; the arriver never pastes a token. The
-            # pause gate below still refuses signup during an incident — admitting new
-            # users while something is wrong is exactly what the pause is there to prevent.
+            # door. It validates an invite code + email, seeds a user record, consumes
+            # the invite, and sets an HttpOnly cookie carrying the new token. The
+            # browser then sends that cookie on every subsequent same-origin fetch; the
+            # arriver never pastes a token.
+            #
+            # ORDER OF CHECKS (deliberate):
+            #   1. incident pause → 503
+            #   2. body / email shape → 400
+            #   3. invite code presence → 400
+            #   4. invite code validity → 403 (generic — doesn't say "unknown" vs "used")
+            #   5. email already registered → 409
+            #   6. seed → 201 + cookie
+            #   7. ONLY on success: consume the invite code (one-way admission)
+            #
+            # The invite gate stands BEFORE the email-collision check, so the collision
+            # branch is only reachable to arrivers who already proved they belong here.
+            # A burnt code is a cost an attacker must pay to even probe an email — which
+            # closes the enumeration oracle at the economic rather than cryptographic level
+            # (the right shape for a private-by-default space; cf. the fenced-banyan posture).
             path = self.path.rstrip("/") or "/"
             parts = [p for p in path.split("/") if p]
             if parts == ["signup"]:
+                # Default attributes so _emit_renewal_cookie never crashes if a handler path
+                # didn't go through _authorized. (/signup never does.)
+                self._renew_cookie_token = None  # noqa: SLF001
                 if _beta_paused():
                     self._send(503, {"error": "beta_paused",
                                      "message": "CIRO is paused for maintenance. "
                                                 "Please check back shortly."})
                     return
-                data, ok = self._read_json()
+                data, ok = self._read_signup_body()
                 if not ok:
                     return
                 email = (data.get("email") or "").strip()
@@ -1613,41 +1869,45 @@ def _make_handler(manager: RunManager, token: str | None,
                 if (not email or "@" not in email
                         or email.startswith("@") or email.endswith("@")
                         or len(email) > 254 or " " in email):
-                    self._send(400, {"error": "bad_email"})
-                    return
+                    return self._signup_reply(400, {"error": "bad_email"})
                 declared_role = (data.get("declared_role") or "").strip() or "stranger"
+                invite = (data.get("invite_code") or "").strip()
+                if not invite:
+                    return self._signup_reply(403, {
+                        "error": "invite_required",
+                        "message": "Signup requires an invite."})
+                # Probe the code WITHOUT consuming it. We only consume after seed succeeds,
+                # so a 409 (email collision) doesn't burn the code — the arriver can fix
+                # the email and retry with the same invite. Probing here keeps the oracle
+                # closed: an invalid-code arriver never reaches the email-collision branch.
+                if not self._invite_is_live(invite):
+                    return self._signup_reply(403, {
+                        "error": "bad_invite",
+                        "message": "Signup requires an invite."})
                 # NOT idempotent on email: refuse re-signup with an existing email. An
                 # earlier draft returned the existing user's token on the cookie — which
                 # would let anyone impersonate anyone just by knowing their email. The
                 # honest minimum is to refuse and point at the (NAMED-not-built) sign-in
                 # path: a magic-link flow carrying proof-of-email, which S1 does NOT ship.
-                # Until that lands, a lost cookie dead-ends the person back to Rico. The
-                # CLI (`users.py seed`) remains the operator-side door for recovery.
                 if user_for_email(email) is not None:
-                    self._send(409, {"error": "email_in_use",
-                                     "message": "That email is already signed up. "
-                                                "Sign-in by link is being wired."})
-                    return
+                    return self._signup_reply(409, {
+                        "error": "email_in_use",
+                        "message": "That email is already signed up. "
+                                   "Sign-in by link is being wired."})
                 try:
                     rec = seed_user(email, declared_role)
                 except ValueError:
-                    self._send(400, {"error": "bad_email"})
-                    return
-                body = json.dumps({"ok": True, "redirect": "/"}).encode("utf-8")
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(body)))
-                # HttpOnly: JS cannot read the cookie (XSS can't steal the token from JS).
-                # SameSite=Lax: cross-site requests cannot carry the cookie (CSRF floor).
-                # Path=/: available on every route the server serves.
-                # Max-Age one year: the cookie survives a page close; a device reset or
-                # explicit sign-out (future-shape) is the way back to anonymous.
-                self.send_header(
-                    "Set-Cookie",
-                    f"token={rec['token']}; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000",
-                )
-                self.end_headers()
-                self.wfile.write(body)
+                    return self._signup_reply(400, {"error": "bad_email"})
+                # Consume the invite only AFTER the user record is on disk. consume_code
+                # is atomic under flock; a lost race here (two arrivers using the same
+                # code at the same instant) means one of them gets through and the other's
+                # consume returns False — their user record is still created, but the
+                # invite is gone, so this is a one-way admission for the slot. We log the
+                # race via the audit log channel the deployer wires in; the arriver's
+                # path still works. The alternative (consume FIRST then seed) burns codes
+                # on seed failures, which is worse.
+                consume_invite_code(invite, rec["id"])
+                self._signup_success(rec)
                 return
             if not self._authorized():
                 return
