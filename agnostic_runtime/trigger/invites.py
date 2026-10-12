@@ -302,8 +302,41 @@ def _import_fcntl():
         return None
 
 
-def _consume_locked(code: str, user_id: str) -> bool:
-    """Consume one unused code. CALLER MUST HOLD ``invite_locked_section()``.
+class _InviteLockToken:
+    """Opaque proof-of-hold yielded by ``invite_locked_section()``.
+
+    The token is the structural precondition for ``consume_held``: a caller
+    cannot type the right argument without first entering the lock-section's
+    with-block, so "caller must hold the lock" moves from docstring-only
+    (easy to miss, easy to drift) to the type signature itself. The previous
+    shape yielded a bool, and the "you must hold the lock" invariant lived in
+    a comment on ``_consume_locked`` — a reader who grepped for the consume
+    function and copy-pasted it elsewhere could lose the invariant silently.
+
+    ``acquired`` reports whether the kernel-level flock was taken: True when
+    fcntl.LOCK_EX succeeded, False on platforms without fcntl (Windows) or
+    when the flock call itself failed. The token is handed out either way so
+    the critical section still runs — correctness against the single-code-
+    double-use pathology still holds via _write_atomic's rename ordering,
+    only the TOCTOU window reopens — but a caller that cares about the
+    stronger guarantee can inspect ``.acquired``.
+    """
+
+    __slots__ = ("acquired",)
+
+    def __init__(self, acquired: bool) -> None:
+        self.acquired = acquired
+
+
+def consume_held(token: _InviteLockToken, code: str, user_id: str) -> bool:
+    """Consume one unused invite code. CALLER MUST HOLD ``invite_locked_section()``
+    and pass the token this context manager yielded.
+
+    Promoted from the earlier private ``_consume_locked``: carrying the lock
+    token in the signature makes the precondition structural rather than
+    docstring-only — a caller cannot invoke this function without first
+    entering the lock-section's with-block, so a future refactor cannot
+    accidentally skip the lock and still typecheck.
 
     Returns True on success. Reads _load_raw() every call (no in-memory cache),
     so a probe-then-consume sequence under one held lock sees a consistent view
@@ -311,6 +344,13 @@ def _consume_locked(code: str, user_id: str) -> bool:
     mutation — the lock orders the renames.
     """
     import hmac
+    if not isinstance(token, _InviteLockToken):
+        # Programmer error — not an attacker-visible path. Raise so the mistake
+        # surfaces at the call site rather than silently decaying the lock
+        # discipline. (The /signup handler holds the token via `as` on the
+        # context manager; CLI callers go through ``consume_code`` instead.)
+        raise TypeError(
+            "consume_held requires the lock token yielded by invite_locked_section()")
     code = (code or "").strip()
     if not code:
         return False
@@ -365,19 +405,21 @@ def is_code_live(code: str) -> bool:
 
 
 @contextmanager
-def invite_locked_section() -> Iterator[bool]:
+def invite_locked_section() -> Iterator[_InviteLockToken]:
     """Hold the invite flock for the duration of a critical section.
 
-    Yields True when the kernel-level flock was acquired, False when the
-    platform lacks fcntl (Windows) or the flock call failed. Callers run
-    ``is_code_live`` → collision check → seed → ``_consume_locked`` under
-    the same held lock, so a race between two arrivers typing the same code
-    at the same millisecond cannot both pass the probe. (Without this, the
-    probe-then-consume sequence had a TOCTOU window where both arrivers saw
-    a live code; the consume ordered one through and left the other's user
-    record on disk pointing at a slot nobody owns.)
+    Yields an ``_InviteLockToken`` — opaque proof-of-hold the caller passes to
+    ``consume_held`` so the "you must hold the lock" invariant is a signature,
+    not a docstring. The token's ``.acquired`` is True when the kernel-level
+    flock was taken, False when the platform lacks fcntl (Windows) or the
+    flock call failed. Callers run ``is_code_live`` → collision check → seed
+    → ``consume_held`` under the same held lock, so a race between two
+    arrivers typing the same code at the same millisecond cannot both pass the
+    probe. (Without this, the probe-then-consume sequence had a TOCTOU window
+    where both arrivers saw a live code; the consume ordered one through and
+    left the other's user record on disk pointing at a slot nobody owns.)
 
-    The ``False`` branch (no fcntl) falls back to atomic-rename-only
+    The ``acquired=False`` case (no fcntl) falls back to atomic-rename-only
     serialization — correctness still holds for the single-code-double-use
     pathology (the second ``_write_atomic`` sees used_at set and refuses),
     but the TOCTOU window reopens for near-simultaneous collisions.
@@ -386,7 +428,7 @@ def invite_locked_section() -> Iterator[bool]:
     lock = _lock_path()
     fcntl = _import_fcntl()
     if fcntl is None:
-        yield False
+        yield _InviteLockToken(acquired=False)
         return
     with open(lock, "a+") as lock_fh:
         try:
@@ -396,10 +438,10 @@ def invite_locked_section() -> Iterator[bool]:
         try:
             fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX)
         except OSError:
-            yield False
+            yield _InviteLockToken(acquired=False)
             return
         try:
-            yield True
+            yield _InviteLockToken(acquired=True)
         finally:
             try:
                 fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
@@ -413,28 +455,84 @@ def consume_code(code: str, user_id: str) -> bool:
     Returns True iff the code existed and was unused BEFORE this call. The call
     marks it used atomically; a second call with the same code returns False.
     This is the STANDALONE path (CLI, out-of-handler callers); the signup
-    handler uses ``invite_locked_section()`` + ``_consume_locked`` directly so
+    handler uses ``invite_locked_section()`` + ``consume_held`` directly so
     the lock spans the entire critical section rather than just the consume.
     """
-    with invite_locked_section():
-        return _consume_locked(code, user_id)
+    with invite_locked_section() as _lock:
+        return consume_held(_lock, code, user_id)
+
+
+# Rotate the probe log when it crosses this many bytes. 1 MiB holds ~25k lines at
+# ~40 chars each — plenty of signal for the operator (a probe burst is visible in
+# dozens of lines, not thousands) while bounding unbounded growth from a hostile
+# client who learned the endpoint and started hammering it. Rotation is a simple
+# truncate-and-restart: this log is operator-signal, not forensic — the old-N lines
+# are not worth the shape complexity of a rolling-file scheme.
+_PROBE_LOG_MAX = 1024 * 1024
 
 
 def record_failed_probe(path_hint: str = "") -> None:
     """Append-only timestamp log of failed /signup invite attempts.
 
-    One line per failure. The log is for the operator (Rico) — a sudden burst
-    of lines before a legitimate arriver reports a stolen slot is the signal
-    that the invite space is being probed. No code strings are logged (so an
-    attacker running the parsing can't verify a hit from the log), only the
-    timestamp. Non-fatal: if the log cannot be written we drop silently rather
-    than let logging block a /signup response.
+    One line per failure. The log is for the operator — a sudden burst of lines
+    before a legitimate arriver reports a stolen slot is the signal that the
+    invite space is being probed. No code strings are logged (so an attacker
+    reading the parsing can't verify a hit from the log), only the timestamp.
+    Non-fatal: if the log cannot be written we drop silently rather than let
+    logging block a /signup response.
+
+    Hardening (symmetric with ``_write_atomic``): opened with O_NOFOLLOW +
+    0o600 at create time, fstat'd after open to refuse appending to a file
+    with loose mode (a chmod that silently no-ops on exotic filesystems can
+    leave a world-readable log — the attacker gets the timestamp stream for
+    free; refusing to append closes that leak). Truncate-rotated at
+    ``_PROBE_LOG_MAX`` bytes so hostile growth stays bounded.
     """
     try:
         _ensure_dir()
         log = _path().parent / "invite_probes.log"
-        with open(log, "a", encoding="utf-8") as fh:
-            fh.write(_now() + (f"  {path_hint}\n" if path_hint else "\n"))
+        # O_NOFOLLOW refuses a pre-staged symlink pointing at a world-readable
+        # victim file; 0o600 at create time (not post-chmod) closes the window
+        # where the file lands world-readable for the first write.
+        flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT
+        flags |= getattr(os, "O_NOFOLLOW", 0)
+        try:
+            fd = os.open(log, flags, 0o600)
+        except OSError:
+            return
+        try:
+            # Verify mode AFTER open — the symmetry fix. _write_atomic stats the
+            # final file to catch a silently-failed chmod; this does the same for
+            # append-only logs so a loose mode on a pre-existing file is caught
+            # before we append secrets (even timestamps are information to an
+            # attacker who can read the log world-readably).
+            try:
+                st = os.fstat(fd)
+            except OSError:
+                return
+            perm = _stat.S_IMODE(st.st_mode)
+            if perm & 0o077:
+                _warn(f"probe log {log} mode is 0o{perm:03o} "
+                      f"(group/other bits set; want 0o*00) — append refused")
+                return
+            # Rotate: if we would push the log past the size cap, truncate it
+            # back to zero and leave a one-line marker so the operator can see
+            # that rotation happened (and roughly when). Rotation under flock
+            # would be nicer but this file is NOT invite-authoritative — it's
+            # operator-signal — and racing a rotate with a concurrent append
+            # at worst loses that line, not an invite admission.
+            line = _now() + (f"  {path_hint}\n" if path_hint else "\n")
+            if st.st_size + len(line) > _PROBE_LOG_MAX:
+                os.close(fd)
+                fd = os.open(log, flags | os.O_TRUNC, 0o600)
+                os.write(fd, f"# rotated at {_now()} (prior log reached cap)\n"
+                              .encode("utf-8"))
+            os.write(fd, line.encode("utf-8"))
+        finally:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
         try:
             os.chmod(log, 0o600)
         except OSError:

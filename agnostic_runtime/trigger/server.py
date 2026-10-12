@@ -431,6 +431,7 @@ body.paused #plate .pbactions button,body.paused #compose button.send{opacity:.5
       <label>model</label><select id="model"><option value="cathedral">CIRO (runs on Anthropic's Claude, on this machine)</option><option value="demo">demo (scripted, zero compute)</option><option value="ollama">ollama (local, private)</option><option value="claude">claude (cloud)</option><option value="stub">stub (test)</option></select>
       <button class="sec" onclick="fresh();cfg()">start a fresh conversation</button>
     </details>
+    <div id="signout-row" style="display:none;margin-top:.8rem"><button class="sec" type="button" onclick="signout()">sign out</button></div>
     <button class="sec" onclick="cfg()">close</button>
   </div>
   <div id="convo"></div>
@@ -487,7 +488,32 @@ tok.addEventListener('change',()=>sset('t7',tok.value));
 model.addEventListener('change',()=>sset('m7',model.value));
 // First encounter: do NOT auto-open the token wall. The hero (reception) carries the room; cfg
 // opens on Send-without-token (see go()) or on the gear. Reception first, gate second.
-function cfg(){const c=$('cfg');c.style.display=c.style.display==='none'?'block':'none'}
+// On open, reflect the current AUTHED state in the sign-out row so a signed-in arriver sees
+// the exit, and a first-visit arriver doesn't see a sign-out they cannot use.
+function cfg(){
+  const c=$('cfg');
+  const opening=c.style.display==='none';
+  c.style.display=opening?'block':'none';
+  if(opening){const sr=$('signout-row');if(sr)sr.style.display=AUTHED?'block':'none';}
+}
+// --- signout: the merciful exit ---------------------------------------------------------------
+// POSTs /signout; the server replies 200 with a cookie-clearing Set-Cookie (Max-Age=0). We
+// then reload so the browser renders from a clean boot — AUTHED resets to false and the
+// signup card returns naturally. Clear local draft/thread state too: a signed-out person
+// should not find their next session seeded with the prior one's compose. Non-fatal on
+// network failure: say so and leave the UI as-is rather than pretend we signed them out.
+async function signout(){
+  try{
+    const r=await fetch('/signout',{method:'POST',headers:H()});
+    if(!r.ok){const say=$('say');if(say)say.textContent='sign-out did not go through — try again.';return;}
+    // Clear local state: the pasted ops token ('t7'), the conversation pointer ('c7'),
+    // and the compose draft for that conversation. If 't7' survived, the next visit
+    // would silently re-authenticate as the ops role; dropping it is the honest exit.
+    sdel('t7');sdel(dkey());sdel('c7');tok.value='';
+    AUTHED=false;
+    location.reload();
+  }catch(e){const say=$('say');if(say)say.textContent='sign-out did not go through — try again.';}
+}
 // --- signup: the arriver's first door ---------------------------------------------------------
 // Reveals the signup panel (osignup) or closes it (dsignup). A chip tap seeds the compose and
 // reveals signup only when the arriver is NOT already authed; a repeat visit shouldn't ambush a
@@ -517,7 +543,7 @@ async function signup(){
     if(r.status===503){sherr('CIRO is paused for maintenance — try again shortly.');return}
     if(r.status===400){sherr('that email looks off');return}
     if(r.status===403){sherr('this space opens by invite — that code did not match a live one.');$('su-invite').focus();return}
-    if(r.status===409){sherr('that email is already signed up. sign-in by link is being wired — for now, reach Rico.');return}
+    if(r.status===409){sherr('that email is already signed up. the sign-in link flow isn’t wired yet — ask whoever sent your invite to help you back in.');return}
     if(!r.ok){sherr('signup did not go through — try again.');return}
     AUTHED=true;
     // The HttpOnly cookie is set; reload so the authed surface renders from a clean boot
@@ -1865,11 +1891,14 @@ def _make_handler(manager: RunManager, token: str | None,
                 declared_role = (data.get("declared_role") or "").strip() or "stranger"
                 invite = (data.get("invite_code") or "").strip()
                 # Hold the invite flock for the ENTIRE critical section. If fcntl is
-                # unavailable (Windows) the CM yields False — we still run the same
-                # branches; correctness holds against the single-code-double-use
-                # pathology via _write_atomic's rename, and the TOCTOU window is the
-                # same narrow one the brief notes is not what the beta defends against.
-                with _invites.invite_locked_section():
+                # unavailable (Windows) the CM yields a token with .acquired=False —
+                # we still run the same branches; correctness holds against the
+                # single-code-double-use pathology via _write_atomic's rename, and
+                # the TOCTOU window is the same narrow one the brief notes is not
+                # what the beta defends against. The yielded token is passed to
+                # ``consume_held`` below so the "caller holds the lock" invariant
+                # is structural (type-checked at the call site), not docstring-only.
+                with _invites.invite_locked_section() as _lock:
                     # (3) Missing OR invalid invite collapse to one response. The
                     #     previous shape returned "invite_required" vs "bad_invite"
                     #     — a JSON probe could distinguish them, oraclising the
@@ -1885,12 +1914,19 @@ def _make_handler(manager: RunManager, token: str | None,
                     #     impersonate anyone just by knowing their email. The honest
                     #     minimum is to refuse and point at the (NAMED-not-built)
                     #     sign-in path: a magic-link flow carrying proof-of-email,
-                    #     which S1 does NOT ship.
+                    #     which S1 does NOT ship. The copy names the dead-end
+                    #     honestly and routes the arriver to the channel they
+                    #     already used (the invite's sender) rather than a
+                    #     here-not-named operator — that is both the honest
+                    #     geometry (whoever sent the invite can bridge) and
+                    #     avoids identifying the operator on the public surface.
                     if user_for_email(email) is not None:
                         return self._signup_reply(409, {
                             "error": "email_in_use",
                             "message": "That email is already signed up. "
-                                       "Sign-in by link is being wired."})
+                                       "The sign-in link flow isn't wired yet "
+                                       "— ask whoever sent your invite to help "
+                                       "you back in."})
                     # (5) Seed the user.
                     try:
                         rec = seed_user(email, declared_role)
@@ -1900,9 +1936,43 @@ def _make_handler(manager: RunManager, token: str | None,
                     #     Still inside the lock, so a race with another arriver using
                     #     the same code has already blocked on the flock above and
                     #     will re-probe after we release and see bad_invite.
-                    #     ``_consume_locked`` requires the lock we hold.
-                    _invites._consume_locked(invite, rec["id"])
+                    #     ``consume_held`` requires the lock token we hold.
+                    _invites.consume_held(_lock, invite, rec["id"])
                 self._signup_success(rec)
+                return
+
+            # /signout — the merciful exit. The authed arriver clicks sign-out, we
+            # clear the cookie and reply so the browser can reload into the signup
+            # card. Requires auth so an unauthenticated POST cannot trigger a
+            # cookie-clearing response (which would be a cheap way to log out
+            # another tab if combined with the same browser). Deliberately NOT
+            # gated by beta_paused: an arriver who wants to leave shouldn't be
+            # held hostage by maintenance.
+            if parts == ["signout"]:
+                if not self._authorized():
+                    return
+                # Suppress the sliding-window renewal: _authorized() sets
+                # ``_renew_cookie_token`` on cookie-auth so active use keeps the
+                # session alive. Here we are explicitly ending the session, so
+                # we clear it before writing the response — emitting a fresh
+                # cookie AND Max-Age=0 in the same reply would race in the
+                # browser's cookie jar. We also skip _send() / _send_html() so
+                # _emit_renewal_cookie() never runs on this response.
+                self._renew_cookie_token = None  # noqa: SLF001
+                secure = "; Secure" if self._is_https_request() else ""
+                # Same attributes as the set-path EXCEPT Max-Age=0, which tells
+                # the browser to delete it. The attribute set must match for the
+                # browser's cookie-jar lookup to find and clear the right entry.
+                clear_cookie = (
+                    f"token=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0{secure}"
+                )
+                body = json.dumps({"ok": True, "signed_out": True}).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Set-Cookie", clear_cookie)
+                self.end_headers()
+                self.wfile.write(body)
                 return
             if not self._authorized():
                 return
