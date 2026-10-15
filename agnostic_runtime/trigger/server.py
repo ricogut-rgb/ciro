@@ -484,14 +484,14 @@ body.paused #plate .pbactions button,body.paused #compose button.send{opacity:.5
   <div class="brand"><span class="sig">CIRO</span><button class="gear" onclick="cfg()" title="settings">&#9881;</button></div>
   <p class="sub">Not sure where to start? Click in the box and hit enter &mdash; signup opens when you&rsquo;re ready.</p>
   <div id="signup" class="cfg" style="display:none" role="dialog" aria-modal="true" aria-labelledby="su-heading">
-    <p class="cfg-welcome" id="su-heading">Sign up. CIRO isn&rsquo;t live yet &mdash; we&rsquo;ll let you know when it opens.</p>
+    <p class="cfg-welcome" id="su-heading">Sign up. CIRO isn&rsquo;t open yet &mdash; we&rsquo;ll let you know when it is.</p>
     <label for="su-invite">invite <span style="text-transform:none;letter-spacing:0;color:var(--faint)">(if you have one &mdash; otherwise skip)</span></label><input id="su-invite" type="text" placeholder="paste the code you were sent" autocomplete="off" autocapitalize="off" spellcheck="false">
     <label for="su-email">email <span style="text-transform:none;letter-spacing:0;color:var(--faint)">(optional)</span></label><input id="su-email" type="email" placeholder="you@wherever" autocomplete="email" inputmode="email">
-    <p class="muted" style="font-size:12px;line-height:1.55;margin:.2rem 0 .6rem">optional &mdash; we only use this to tell you when CIRO opens.</p>
+    <p class="muted" style="font-size:12px;line-height:1.55;margin:.2rem 0 .6rem">optional &mdash; only used to tell you when CIRO opens; nowhere else.</p>
     <label for="su-role">i&rsquo;m a&hellip; <span style="text-transform:none;letter-spacing:0;color:var(--faint)">(optional)</span></label><input id="su-role" type="text" placeholder="builder, writer, founder" autocomplete="off">
     <input id="su-chip" type="hidden" value="">
     <button id="su-go" type="button" onclick="signup()">Sign up</button>
-    <p class="muted" style="font-size:12px;line-height:1.55;margin-top:.7rem">Your email stays on CIRO&rsquo;s server &mdash; not sold, not tracked. Export will be yours.</p>
+    <p class="muted" style="font-size:12px;line-height:1.55;margin-top:.7rem">Your email stays on CIRO&rsquo;s server &mdash; not sold, not tracked.</p>
     <p id="su-err" class="err" role="alert" style="font-size:13px;margin:.4rem 0 0;display:none"></p>
     <button class="sec" type="button" onclick="dsignup()">not now</button>
     <noscript>
