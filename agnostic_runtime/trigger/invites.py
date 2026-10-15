@@ -1,21 +1,46 @@
-"""Invite codes — the one-way layered admission gate for /signup.
+"""Invite codes — the priority-FLAG with one-use-consume mechanics for /signup.
 
-The /signup endpoint used to admit anyone with an email. That was an attacker-oracle
-(email_in_use enumerated the user base) AND a DoS cascade (anyone could inflate
-users.json without bound). Both pathologies share one fix: a code earns the right to
-sign up, admission is one-way layered (gate opens → code is removed; one code = one
-signup), and the fence is value — admission is private-by-default.
+FLAG, NOT GATE. The surface is hybrid-open (see `users.py` lines 16-23 for the
+ratified contract): anyone can arrive at /signup with or without an email, and an
+invite code — when present and live — is a PRIORITY-FLAG, not an admission gate.
+A valid live code accompanying signup sets `priority=True` on the user record and
+is consumed atomically; without an invite the signup still succeeds with
+`priority=False`. The enum-oracle discipline is unchanged: an INVALID code is a
+403 at the handler (an invalid code never silently passes), but a MISSING code is
+not a refusal. The fence has moved — admission is open; the file-privacy chain
+(below) is what stays private.
 
-ONE-USE SEMANTICS. A code is consumed atomically on successful signup. A failed
-signup (bad email, email already registered, seed error) does NOT burn the code.
-This is enforced via a sidecar lockfile (fcntl.flock) so two near-simultaneous
-signups cannot race on the same code.
+ONE-USE-CONSUME. When a code IS present and live, it is consumed atomically on
+successful signup. A failed signup (bad email, email already registered, seed
+error) does NOT burn the code. This is enforced via a sidecar lockfile
+(fcntl.flock) so two near-simultaneous signups cannot race on the same code.
+
+SEED-THEN-CONSUME ORDERING (load-bearing invariant). The /signup caller
+(`server.py` around lines 2088-2103) runs ``seed_user`` BEFORE ``consume_held``,
+both inside the same held ``invite_locked_section()``. A failure between those
+two writes leaves an "orphan live code" — the user record is on disk, the invite
+slot stays live. This is the merciful order chosen deliberately: on partial
+failure we lose the code (operator can re-seed) and keep the user (the arriver
+already crossed the door). A future refactor reordering these two writes MUST
+preserve the invariant or explicitly re-walk the hazard choice; silently flipping
+the order flips the mercy. See `[[author-does-inspector-marks-complete]]` on
+reorderings of load-bearing sequences.
 
 OPERATOR-OWNED FILE. The codes file lives at
 `~/.agnostic_runtime/secrets/invite_codes.json` (overridable via
 AGNOSTIC_TRIGGER_INVITES). The directory and file are created with 0o700 / 0o600
 permissions. It is outside the git tree, outside this module's authority, and the
 operator (Rico) is the only person who adds to it.
+
+OPERATOR-PROVENANCE `note` FIELD. The per-record `note` string (set via the
+`add` CLI, or the `note` kwarg on ``generate_codes`` / ``add_code``) is
+OPERATOR-AUTHORED and OPERATOR-ONLY — it never reaches an arriver's surface, is
+never returned from any handler path, and is never written into user records.
+That provenance is why operator-identifying strings (e.g. "Alice (Oct 12)") are
+safe to put there: the 0o600 file-privacy chain keeps the note on the operator's
+side of the fence. If a future caller starts reading `note` into
+arriver-reachable responses, that breaks the provenance invariant and must be
+treated as a privacy regression, not a feature.
 
                     HOW TO ADD MORE CODES (Rico-level note)
                     ---------------------------------------
@@ -24,7 +49,8 @@ To add 5 fresh single-use codes to your invite file:
 
     python -m agnostic_runtime.trigger.invites seed 5
 
-To add one specific code with a note (e.g. a name you'll remember who got it):
+To add one specific code with a note (e.g. a name you'll remember who got it —
+the note is operator-only, never arriver-visible):
 
     python -m agnostic_runtime.trigger.invites add CODE "Alice (Oct 12)"
 
@@ -337,6 +363,16 @@ def consume_held(token: _InviteLockToken, code: str, user_id: str) -> bool:
     docstring-only — a caller cannot invoke this function without first
     entering the lock-section's with-block, so a future refactor cannot
     accidentally skip the lock and still typecheck.
+
+    ``user_id`` MUST be a non-PII identifier — the opaque 16-hex token minted by
+    ``users.py:seed_user`` via ``secrets.token_hex(8)``, never an email, name,
+    IP, or any other arriver-identifying string. The value is written verbatim
+    into the invite record's ``used_by`` field, and that record lives on the
+    operator side of the 0o600 file-privacy chain alongside the operator's
+    `note`. The invariant is enforced at the CALLER (server.py passes
+    ``rec["id"]``, which is the hex id, not the email) — stating it here closes
+    the only path by which a future server.py refactor could silently push PII
+    into ``used_by``.
 
     Returns True on success. Reads _load_raw() every call (no in-memory cache),
     so a probe-then-consume sequence under one held lock sees a consistent view
