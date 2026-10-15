@@ -772,8 +772,8 @@ def seed_items() -> list[dict]:
     return [
         {
             "id": "example-decision",
-            "title": "Example decision card",
-            "why": ("A card with choices. The operator picks one and the record folds forward. "
+            "title": "Example decision tile",
+            "why": ("A tile with choices. The operator picks one and the record folds forward. "
                     "Replace this seed in your deployment with real open items."),
             "kind": "decision",
             "choices": ["A · one option", "B · another option"],
@@ -783,8 +783,8 @@ def seed_items() -> list[dict]:
         },
         {
             "id": "example-repo",
-            "title": "Example repo card",
-            "why": "A card that shows a repo's standing. No choice to make here.",
+            "title": "Example repo tile",
+            "why": "A tile that shows a repo's standing. No choice to make here.",
             "kind": "repo",
             "choices": [],
             "source": [],

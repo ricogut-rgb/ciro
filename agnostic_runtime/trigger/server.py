@@ -536,8 +536,8 @@ body.paused #plate .pbactions button,body.paused #compose button.send{opacity:.5
 <div id="say" class="sr-only" aria-live="polite"></div>
 <div id="canvas">
   <div id="paused" role="status" aria-live="polite">CIRO is paused for maintenance. Please check back shortly.</div>
-  <section id="plate" aria-label="your plate" hidden>
-    <div class="p-head"><h2 class="p-eyebrow" id="p-eyebrow">next on your plate</h2><button type="button" class="p-zoom" id="p-zoom"></button></div>
+  <section id="plate" aria-label="your tiles" hidden>
+    <div class="p-head"><h2 class="p-eyebrow" id="p-eyebrow">next on your tiles</h2><button type="button" class="p-zoom" id="p-zoom"></button></div>
     <div class="p-last" id="p-last" aria-live="polite"></div>
     <div id="p-body"></div>
   </section>
@@ -1252,7 +1252,7 @@ async function doApprove(it,pb,approve,reject,st){
     try{j=await r.json()}catch(e){j={}}
   }catch(e){
     st.className='p-status bad';
-    st.textContent='No answer from the console server. The approve may not have been recorded; the plate will refresh.';
+    st.textContent='No answer from the console server. The approve may not have been recorded; the tiles will refresh.';
     approve.disabled=false; reject.disabled=false;
     setTimeout(loadPlate,1500); return;
   }
@@ -1288,7 +1288,7 @@ async function doApprove(it,pb,approve,reject,st){
   // would pass through esc() unchanged. Strip at this seam just like prepCard does on
   // the card, so the convo mirror of an approve stays visually honest.
   const safeTitle=strip(it.title||''), safeShape=strip(pb.shape_id||'');
-  const text='Plate · '+safeTitle+' → approve ('+safeShape+')';
+  const text='Tile · '+safeTitle+' → approve ('+safeShape+')';
   addConvo(bubble('you',text,'you'),true);
   const live=addConvo('<div class="bubble muted think">CIRO is thinking…</div>',true);
   if(j.run_id) poll(j.run_id,live);
@@ -1311,7 +1311,7 @@ async function doReject(it,pb,approve,reject,st){
     try{j=await r.json()}catch(e){j={}}
   }catch(e){
     st.className='p-status bad';
-    st.textContent='No answer from the console server. The reject may not have been recorded; the plate will refresh.';
+    st.textContent='No answer from the console server. The reject may not have been recorded; the tiles will refresh.';
     approve.disabled=false; reject.disabled=false;
     setTimeout(loadPlate,1500); return;
   }
@@ -1331,7 +1331,7 @@ async function doReject(it,pb,approve,reject,st){
   // Same strip discipline as doApprove — daemon-written fields never reach the convo
   // or status line un-sanitized, even though bubble()'s esc() is HTML-safe.
   const safeTitle=strip(it.title||''), safeShape=strip(pb.shape_id||'');
-  const text='Plate · '+safeTitle+' → reject ('+safeShape+')';
+  const text='Tile · '+safeTitle+' → reject ('+safeShape+')';
   addConvo(bubble('you',text,'you'),true);
   const live=addConvo('<div class="bubble muted think">CIRO is thinking…</div>',true);
   if(j.run_id) poll(j.run_id,live);
@@ -1367,8 +1367,8 @@ function renderPlate(){
   const awaitingOrder=PLATE.awaiting_approval||[];
   const awaiting=awaitingOrder.map(id=>byId[id]).filter(Boolean);
   if(!ZOOM){
-    $('p-eyebrow').textContent='next on your plate';
-    zb.textContent='see all on your plate ('+items.length+')';
+    $('p-eyebrow').textContent='next on your tiles';
+    zb.textContent='see all on your tiles ('+items.length+')';
     // Awaiting-approval renders FIRST when any exist — a hash-bound proposal is more
     // time-sensitive than a free-choice open question. Both can appear; the register is
     // visually distinct per the group's CSS.
@@ -1376,14 +1376,14 @@ function renderPlate(){
       const g=el('section','p-group');
       g.appendChild(el('h3',null,'Awaiting your approval ('+awaiting.length+')'));
       g.appendChild(prepCard(awaiting[0],{}));
-      if(awaiting.length>1) g.appendChild(el('p','p-empty','+ '+(awaiting.length-1)+' more awaiting — see all on your plate'));
+      if(awaiting.length>1) g.appendChild(el('p','p-empty','+ '+(awaiting.length-1)+' more awaiting — see all on your tiles'));
       body.appendChild(g);
     }
     if(PLATE.next) body.appendChild(card(PLATE.next,{reason:PLATE.reason}));
     else if(!awaiting.length) body.appendChild(el('p','p-empty','Nothing needs you right now.'));
     return;
   }
-  $('p-eyebrow').textContent='all on your plate';
+  $('p-eyebrow').textContent='all on your tiles';
   zb.textContent='back to next';
   const groups=[
     ['Awaiting your approval',awaiting],
@@ -1415,7 +1415,7 @@ async function loadPlate(){
 // --- undo: take back a plate choice -------------------------------------------------------------
 // A dock bubble is a plate act when its turn carries plate:{op:'act',id,act_ts}, which only the
 // server writes (on /plate/act). Turns from before that marker existed fall back to an exact text
-// match ("Plate · <title> → <choice>" for the item's current act), and only the newest such bubble
+// match ("Tile · <title> → <choice>" for the item's current act), and only the newest such bubble
 // gets the control. Undo is drawn only while that act is still the item's current act; once it is
 // undone the bubble says so; after anything else it shows nothing.
 const LEGACY_TS=/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/;   // a pre-marker act: whole seconds, no fraction
@@ -1424,7 +1424,7 @@ function markPlate(d,meta,text){
   const b=d&&d.querySelector('.bubble.you'); if(!b) return;
   if(meta&&(meta.op==='act'||meta.op==='react')&&typeof meta.id==='string'&&typeof meta.act_ts==='string'){
     b.dataset.pid=meta.id; b.dataset.pts=meta.act_ts;
-  }else if(!meta&&typeof text==='string'&&text.startsWith('Plate · ')&&!/ → undo \(was: /.test(text)){
+  }else if(!meta&&typeof text==='string'&&text.startsWith('Tile · ')&&!/ → undo \(was: /.test(text)){
     b.dataset.plegacy='1'; b._ptext=text;
   }else return;
   const slot=el('div','pundo'); b.appendChild(slot);
@@ -1436,13 +1436,13 @@ function syncUndos(){
   // RULE: the text fallback applies ONLY to acts recorded before the turn marker existed. Those
   // acts have second-resolution ts ("…:SSZ"); every act since carries microseconds ("…:SS.ffffffZ")
   // and its own bubble carries the marker. So an act with fractional seconds is never bound by
-  // text: a typed message that mimics "Plate · <title> → <choice>" cannot pick up its Undo.
+  // text: a typed message that mimics "Tile · <title> → <choice>" cannot pick up its Undo.
   const legacy=[...convo.querySelectorAll('.bubble.you[data-plegacy]:not([data-pid])')];
   ((PLATE&&PLATE.items)||[]).forEach(it=>{
     if(!it.act||typeof it.act.ts!=='string') return;
     if(!LEGACY_TS.test(it.act.ts)) return;   // post-change act: marker only, never text
     if(convo.querySelector('.bubble[data-pts="'+CSS.escape(it.act.ts||'')+'"]')) return;
-    const want='Plate · '+it.title+' → '+it.act.choice;
+    const want='Tile · '+it.title+' → '+it.act.choice;
     const b=legacy.find(x=>x._ptext===want&&!x.dataset.pid);
     if(b){b.dataset.pid=it.id;b.dataset.pts=it.act.ts}
   });
@@ -1504,14 +1504,14 @@ async function doUndo(id,actTs,b,slot){
     r=await fetch('/plate/undo',{method:'POST',headers:H(),body:JSON.stringify({id:id,act_ts:actTs,conversation_id:CID})});
     try{j=await r.json()}catch(e){j={}}
   }catch(e){
-    undoNote(slot,'No answer from the console server. The undo may not have been recorded; the plate will refresh to show what is on record.');
+    undoNote(slot,'No answer from the console server. The undo may not have been recorded; the tiles will refresh to show what is on record.');
     PLATE_SIG=''; setTimeout(loadPlate,1500); return;
   }
   if(r.status===401){$('cfg').style.display='block';undoNote(slot,'Not undone: that token did not work. Check settings.');return}
   if(!r.ok){
     const why={nothing_to_undo:'Already undone. Nothing new was recorded.',
                stale_undo:'You chose again since then, so this one was left alone.',
-               unknown_item:'Not undone: this card is not on your plate.',
+               unknown_item:'Not undone: can’t find this tile.',
                user_token_required:'Not undone: only a signed-in person can undo a choice.',
                payload_too_large:'Not undone: the request was too large.'}[j.error]
             ||('Not undone: the server said '+(j.error||r.status)+'.');
@@ -1519,7 +1519,7 @@ async function doUndo(id,actTs,b,slot){
   }
   // Recorded. The undo goes to CIRO in the dock like any message (no Undo on an undo).
   if(j.conversation_id){CID=j.conversation_id;sset('c7',CID)}
-  addConvo(bubble('you',j.text||'Plate · undo','you'),true);
+  addConvo(bubble('you',j.text||'Tile · undo','you'),true);
   const live=addConvo('<div class="bubble muted think">CIRO is thinking…</div>',true);
   if(j.run_id) poll(j.run_id,live);
   const it=plateItem(id), title=it?it.title:'', was=j.undid?j.undid.choice:'';
@@ -1541,20 +1541,20 @@ async function tapChoice(it,choice,row,st){
     try{j=await r.json()}catch(e){j={}}
   }catch(e){
     st.className='p-status bad';
-    st.textContent='No answer from the console server. Your choice may not have been recorded; the plate will refresh to show what is on record.';
+    st.textContent='No answer from the console server. Your choice may not have been recorded; the tiles will refresh to show what is on record.';
     row.querySelectorAll('button').forEach(b=>b.disabled=false);
     setTimeout(loadPlate,1500); return;
   }
   if(r.status===401){$('cfg').style.display='block';st.className='p-status bad';st.textContent='Not sent: that token did not work. Check settings. Nothing was recorded.';row.querySelectorAll('button').forEach(b=>b.disabled=false);return}
   if(r.status===409){st.className='p-status bad';st.textContent='Already settled'+(j.act?' (you chose “'+j.act.choice+'”)':'')+'. Nothing new was recorded.';setTimeout(loadPlate,1500);return}
   if(!r.ok){
-    const why={invalid_choice:'that choice is not one of this card’s choices',unknown_item:'this card is not on your plate',user_token_required:'only a signed-in person can settle a card',payload_too_large:'the request was too large'}[j.error]||('the server said '+(j.error||r.status));
+    const why={invalid_choice:'that choice is not one of this tile’s choices',unknown_item:'can’t find this tile',user_token_required:'only a signed-in person can settle a tile',payload_too_large:'the request was too large'}[j.error]||('the server said '+(j.error||r.status));
     st.className='p-status bad'; st.textContent='Not sent: '+why+'. Nothing was recorded.';
     row.querySelectorAll('button').forEach(b=>b.disabled=false); return;
   }
   // Recorded. Show the message going to CIRO in the dock, exactly like a typed one.
   if(j.conversation_id){CID=j.conversation_id;sset('c7',CID)}
-  markPlate(addConvo(bubble('you',j.text||('Plate · '+it.title+' → '+choice),'you'),true),
+  markPlate(addConvo(bubble('you',j.text||('Tile · '+it.title+' → '+choice),'you'),true),
             j.act?{op:'act',id:j.act.id,act_ts:j.act.ts}:null);
   const live=addConvo('<div class="bubble muted think">CIRO is thinking…</div>',true);
   if(j.run_id) poll(j.run_id,live);
@@ -1588,7 +1588,7 @@ function typedCommand(d,p){
   }else if(p.error==='unknown_item'){
     msg='Can’t act on '+tag+'. Nothing was recorded.';
   }else if(p.error==='user_token_required'){
-    msg='Only a signed-in person can settle a card, so nothing was recorded.';
+    msg='Only a signed-in person can settle a tile, so nothing was recorded.';
   }else{
     msg='Nothing was recorded (the server said '+(p.error||'no')+').';
   }
@@ -2214,7 +2214,7 @@ def _make_handler(manager: RunManager, token: str | None,
                 if code != 200:
                     self._send(code, result)
                     return
-                text = "Plate · " + result["title"] + " → " + result["act"]["choice"]
+                text = "Tile · " + result["title"] + " → " + result["act"]["choice"]
                 out = self._tell_cathedral(text, data, {
                     "op": "act", "id": result["act"]["id"], "act_ts": result["act"]["ts"]})
                 self._send(200, {"act": result["act"], **out})
@@ -2241,7 +2241,7 @@ def _make_handler(manager: RunManager, token: str | None,
                 # receives it and the (future) daemon-side admit can act.
                 # Text names the shape + title; the daemon reads the plate record for the
                 # authoritative approve event (never trusts message text).
-                text = ("Plate · " + result["title"] + " → approve ("
+                text = ("Tile · " + result["title"] + " → approve ("
                         + result["shape_id"] + ")")
                 out = self._tell_cathedral(text, data, {
                     "op": "approve", "id": data.get("id"),
@@ -2261,7 +2261,7 @@ def _make_handler(manager: RunManager, token: str | None,
                 if code != 200:
                     self._send(code, result)
                     return
-                text = ("Plate · " + result["title"] + " → reject ("
+                text = ("Tile · " + result["title"] + " → reject ("
                         + result["shape_id"] + ")")
                 out = self._tell_cathedral(text, data, {
                     "op": "reject", "id": data.get("id"),
@@ -2288,7 +2288,7 @@ def _make_handler(manager: RunManager, token: str | None,
                 if undid.get("replaced"):
                     # Undoing a typed re-choose reopens the card; the earlier choice stays undone.
                     was += "; " + undid["replaced"] + " is not restored"
-                text = "Plate · " + result["title"] + " → undo (was: " + was + ")"
+                text = "Tile · " + result["title"] + " → undo (was: " + was + ")"
                 out = self._tell_cathedral(text, data, {
                     "op": "undo", "id": result["undo"]["id"], "act_ts": undid["ts"]})
                 self._send(200, {"undo": result["undo"], "undid": undid, **out})
